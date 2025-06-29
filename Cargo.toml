@@ -1,0 +1,26 @@
+[package]
+name = "mcp-bridge"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "mcp_bridge"
+path = "src/lib.rs"
+
+[dependencies]
+tokio = { version = "1", features = ["full", "rt-multi-thread", "process", "signal", "sync", "rt"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+clap = { version = "4.0", features = ["derive"] }
+tracing = "0.1"
+tracing-subscriber = "0.3"
+async-trait = "0.1"
+rumqttc = "0.24"
+tokio-tungstenite = { version = "0.20", features = ["native-tls"] }
+futures-util = "0.3"
+anyhow = "1.0"
+thiserror = "1.0"
+
+[dev-dependencies]
+tempfile = "3.3"
+tokio = { version = "1", features = ["rt", "macros", "test-util"] }
