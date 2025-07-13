@@ -1,0 +1,32 @@
+{
+  "mcpEndpoint": "wss://api.xiaozhi.me/mcp/?token=your-token",
+  "mcpServers": {
+    "calculator": {
+      "command": "node",
+      "args": [
+        "./mcpServers/calculator.js"
+      ]
+    },
+    "datetime": {
+      "command": "node",
+      "args": [
+        "./mcpServers/datetime.js"
+      ]
+    },
+    "amap-maps": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "@amap/amap-maps-mcp-server"
+      ],
+      "env": {
+        "AMAP_MAPS_API_KEY": "your-key"
+      }
+    }
+  },
+  "connection": {
+    "heartbeatInterval": 30000,
+    "heartbeatTimeout": 10000,
+    "reconnectInterval": 5000
+  }
+}
