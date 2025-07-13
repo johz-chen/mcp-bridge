@@ -1,0 +1,18 @@
+websocket:
+  enabled: true
+  endpoint: wss://api.xiaozhi.me/mcp/?token=your-token
+
+mqtt:
+  enabled: false
+  broker: "broker.example.com"
+  port: 1883
+  client_id: ""
+  topic: "mcp/bridge"
+
+connection:
+  heartbeat:
+    interval: 30000
+    timeout: 10000
+  reconnect:
+    interval: 5000
+    max_attempts: 10
