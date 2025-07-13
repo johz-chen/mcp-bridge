@@ -2,13 +2,13 @@
     "calculator": {
       "command": "node",
       "args": [
-        "./mcpServers/calculator.js"
+        "./example_mcp_tools/calculator.js"
       ]
     },
     "datetime": {
       "command": "node",
       "args": [
-        "./mcpServers/datetime.js"
+        "./example_mcp_tools/datetime.js"
       ]
     },
     "amap-maps": {
