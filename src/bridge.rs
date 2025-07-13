@@ -36,8 +36,10 @@ impl Bridge {
     /// 将服务器名称中的中划线替换为下划线，并添加 xzcli 前缀
     pub fn generate_prefixed_tool_name(&self, server_name: &str, tool_name: &str) -> String {
         let normalized_server_name = server_name.replace('-', "_");
-        format!("{}_xzcli_{}", normalized_server_name, tool_name)
+        // 使用内嵌格式参数
+        format!("{normalized_server_name}_xzcli_{tool_name}")
     }
+
 
     #[cfg(test)]
     pub fn new_test_instance(config: BridgeConfig) -> Self {
@@ -217,7 +219,7 @@ impl Bridge {
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_millis())
             .unwrap_or(0);
-        let ping_id = format!("ping-{}", timestamp);
+        let ping_id = format!("ping-{timestamp}");
         
         let ping_message = json!({
             "jsonrpc": "2.0",
