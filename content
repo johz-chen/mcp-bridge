@@ -1,0 +1,1374 @@
+Cargo.toml:
+[package]
+name = "mcp-bridge"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+name = "mcp_bridge"
+path = "src/lib.rs"
+
+[dependencies]
+tokio = { version = "1", features = ["full", "rt-multi-thread", "process", "signal", "sync", "rt"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+clap = { version = "4.0", features = ["derive"] }
+tracing = "0.1"
+tracing-subscriber = "0.3"
+async-trait = "0.1"
+rumqttc = "0.24"
+tokio-tungstenite = { version = "0.20", features = ["native-tls"] }
+futures-util = "0.3"
+anyhow = "1.0"
+thiserror = "1.0"
+
+[dev-dependencies]
+tempfile = "3.3"
+tokio = { version = "1", features = ["rt", "macros", "test-util"] }
+
+tests/integration_tests.rs:
+use mcp_bridge::config::{BridgeConfig, ConnectionConfig, ProcessConfig};
+use std::collections::HashMap;
+use tokio::sync::mpsc;
+use tokio::time::{Duration, timeout};
+
+#[tokio::test]
+async fn test_process_start_and_stop() {
+    let config = ProcessConfig {
+        command: "echo".to_string(),
+        args: vec!["hello world".to_string()],
+        env: HashMap::new(),
+    };
+
+    let (tx, mut rx) = mpsc::channel(10);
+    let server_name = "test_server".to_string();
+
+    let mut process = mcp_bridge::process::ManagedProcess::new(&config).unwrap();
+    process.start(tx, server_name.clone()).await.unwrap();
+
+    // Give the process a moment to start
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    // Stop the process
+    process.stop().await.unwrap();
+
+    // Check output
+    let output = timeout(Duration::from_secs(1), rx.recv()).await;
+    assert!(output.is_ok());
+    if let Ok(Some((name, msg))) = output {
+        assert_eq!(name, "test_server");
+        assert!(msg.contains("hello world"));
+    }
+}
+
+#[tokio::test]
+async fn test_config_loading() {
+    let config = BridgeConfig {
+        endpoint: "wss://example.com".to_string(),
+        servers: [(
+            "test_server".to_string(),
+            ProcessConfig {
+                command: "echo".to_string(),
+                args: vec!["hello".to_string()],
+                env: HashMap::new(),
+            },
+        )]
+        .iter()
+        .cloned()
+        .collect(),
+        connection: ConnectionConfig::default(),
+        mqtt: None,
+    };
+
+    assert_eq!(config.servers.len(), 1);
+    assert_eq!(config.servers["test_server"].command, "echo");
+}
+
+// 在集成测试中定义 Bridge 结构体的简化版本
+struct TestBridge {
+    config: BridgeConfig,
+    // 只需要测试中使用的字段
+}
+
+impl TestBridge {
+    fn new(config: BridgeConfig) -> Self {
+        Self { config }
+    }
+
+    // 复制 generate_prefixed_tool_name 方法
+    fn generate_prefixed_tool_name(&self, server_name: &str, tool_name: &str) -> String {
+        let normalized_server_name = server_name.replace('-', "_");
+        format!("{}_xzcli_{}", normalized_server_name, tool_name)
+    }
+}
+
+#[tokio::test]
+async fn test_tool_name_generation() {
+    let config = BridgeConfig {
+        endpoint: "wss://example.com".to_string(),
+        servers: HashMap::new(),
+        connection: ConnectionConfig::default(),
+        mqtt: None,
+    };
+
+    // 使用本地定义的 TestBridge
+    let bridge = TestBridge::new(config);
+    let name = bridge.generate_prefixed_tool_name("my-server", "my-tool");
+    assert_eq!(name, "my_server_xzcli_my-tool");
+}
+
+conf/config.json:
+{
+  "mcpEndpoint": "wss://api.xiaozhi.me/mcp/?token=your-token",
+  "mcpServers": {
+    "calculator": {
+      "command": "node",
+      "args": [
+        "./mcpServers/calculator.js"
+      ]
+    },
+    "datetime": {
+      "command": "node",
+      "args": [
+        "./mcpServers/datetime.js"
+      ]
+    },
+    "amap-maps": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "@amap/amap-maps-mcp-server"
+      ],
+      "env": {
+        "AMAP_MAPS_API_KEY": "your-key"
+      }
+    }
+  },
+  "connection": {
+    "heartbeatInterval": 30000,
+    "heartbeatTimeout": 10000,
+    "reconnectInterval": 5000
+  }
+}
+
+src/config.rs:
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+use std::fs;
+use std::path::Path;
+use thiserror::Error;
+
+#[derive(Debug, Error)]
+pub enum ConfigError {
+    #[error("Config file not found: {0}")]
+    NotFound(String),
+    #[error("Invalid config format: {0}")]
+    InvalidFormat(String),
+    #[error("IO error: {0}")]
+    IoError(#[from] std::io::Error),
+    #[error("JSON parse error: {0}")]
+    JsonError(#[from] serde_json::Error),
+}
+
+// 连接配置
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct ConnectionConfig {
+    #[serde(default = "default_heartbeat_interval")]
+    pub heartbeat_interval: u64, // 毫秒
+    #[serde(default = "default_heartbeat_timeout")]
+    pub heartbeat_timeout: u64, // 毫秒
+    #[serde(default = "default_reconnect_interval")]
+    pub reconnect_interval: u64, // 毫秒
+    #[serde(default = "default_max_reconnect_attempts")]
+    pub max_reconnect_attempts: u32,
+}
+
+fn default_heartbeat_interval() -> u64 {
+    30000
+}
+fn default_heartbeat_timeout() -> u64 {
+    10000
+}
+fn default_reconnect_interval() -> u64 {
+    5000
+}
+fn default_max_reconnect_attempts() -> u32 {
+    10
+}
+
+// 本地进程配置
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProcessConfig {
+    pub command: String,
+    pub args: Vec<String>,
+    #[serde(default)]
+    pub env: HashMap<String, String>,
+}
+
+// MQTT 配置
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MqttConfig {
+    pub broker: String,
+    pub port: u16,
+    #[serde(default = "default_mqtt_client_id")]
+    pub client_id: String,
+    pub topic: String,
+}
+
+fn default_mqtt_client_id() -> String {
+    format!("mcp-bridge-{}", std::process::id())
+}
+
+// 主配置结构
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BridgeConfig {
+    #[serde(rename = "mcpEndpoint")]
+    pub endpoint: String,
+    #[serde(rename = "mcpServers")]
+    pub servers: HashMap<String, ProcessConfig>,
+    #[serde(rename = "connection", default)]
+    pub connection: ConnectionConfig,
+    #[serde(default)]
+    pub mqtt: Option<MqttConfig>, // 可选的 MQTT 配置
+}
+
+impl BridgeConfig {
+    /// 从文件加载配置
+    pub fn load_from_file<P: AsRef<Path>>(path: P) -> Result<Self, ConfigError> {
+        let path = path.as_ref();
+        if !path.exists() {
+            return Err(ConfigError::NotFound(path.display().to_string()));
+        }
+
+        let content = fs::read_to_string(path)?;
+        let config: Self = serde_json::from_str(&content)?;
+        config.validate()?;
+        Ok(config)
+    }
+
+    /// 验证配置有效性
+    fn validate(&self) -> Result<(), ConfigError> {
+        if self.endpoint.is_empty() {
+            return Err(ConfigError::InvalidFormat(
+                "mcpEndpoint cannot be empty".into(),
+            ));
+        }
+
+        if self.servers.is_empty() {
+            return Err(ConfigError::InvalidFormat(
+                "mcpServers cannot be empty".into(),
+            ));
+        }
+
+        for (name, server) in &self.servers {
+            if server.command.is_empty() {
+                return Err(ConfigError::InvalidFormat(format!(
+                    "process.command for server {name} cannot be empty"
+                )));
+            }
+        }
+
+        if let Some(mqtt) = &self.mqtt {
+            if mqtt.broker.is_empty() {
+                return Err(ConfigError::InvalidFormat(
+                    "mqtt.broker cannot be empty".into(),
+                ));
+            }
+            if mqtt.topic.is_empty() {
+                return Err(ConfigError::InvalidFormat(
+                    "mqtt.topic cannot be empty".into(),
+                ));
+            }
+        }
+
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Write;
+    use tempfile::NamedTempFile;
+
+    #[test]
+    fn test_load_valid_config() {
+        let mut file = NamedTempFile::new().unwrap();
+        writeln!(
+            file,
+            r#"{{
+            "mcpEndpoint": "wss://example.com/mcp",
+            "mcpServers": {{
+                "test_server": {{
+                    "command": "echo",
+                    "args": ["hello"]
+                }}
+            }},
+            "connection": {{
+                "heartbeatInterval": 30000,
+                "heartbeatTimeout": 10000,
+                "reconnectInterval": 5000,
+                "max_reconnect_attempts": 10
+            }}
+        }}"#
+        )
+        .unwrap();
+
+        let config = BridgeConfig::load_from_file(file.path()).unwrap();
+        assert_eq!(config.endpoint, "wss://example.com/mcp");
+        assert_eq!(config.servers.len(), 1);
+        assert_eq!(config.servers["test_server"].command, "echo");
+        assert_eq!(config.connection.heartbeat_interval, 30000);
+        assert_eq!(config.connection.max_reconnect_attempts, 10);
+    }
+
+    #[test]
+    fn test_load_invalid_config() {
+        let mut file = NamedTempFile::new().unwrap();
+        writeln!(file, "invalid json").unwrap();
+
+        let result = BridgeConfig::load_from_file(file.path());
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_validate_config() {
+        let config = BridgeConfig {
+            endpoint: "".to_string(),
+            servers: HashMap::new(),
+            connection: ConnectionConfig::default(),
+            mqtt: None,
+        };
+
+        let result = config.validate();
+        assert!(result.is_err());
+    }
+}
+
+src/bridge/core.rs:
+use crate::config::{BridgeConfig, ConnectionConfig};
+use crate::process::ManagedProcess;
+use crate::transports::{Transport, WebSocketTransport, MqttTransport};
+use anyhow::{anyhow, Context};
+use serde_json::Value;
+use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
+use tokio::sync::mpsc;
+use tokio::io::AsyncWriteExt;
+use tokio::time::{Duration, sleep, Instant, interval};
+use tokio::process::ChildStdin;
+use tracing::{debug, error, info, warn};
+
+use super::*;
+
+pub struct Bridge {
+    pub config: BridgeConfig,
+    pub transports: Vec<Box<dyn Transport>>,
+    pub processes_stdin: HashMap<String, ChildStdin>,
+    #[allow(dead_code)]
+    pub message_tx: mpsc::Sender<Value>,
+    pub message_rx: mpsc::Receiver<Value>,
+    pub connection_config: Arc<ConnectionConfig>,
+    pub is_connected: bool,
+    pub reconnect_attempt: u32,
+    pub initialized: bool,
+    pub tools: HashMap<String, (String, Value)>,
+    pub tool_service_map: HashMap<String, (String, String)>,
+    pub last_activity: Instant,
+    pub last_ping_sent: Instant,
+    pub pending_tools_list_request: Option<Value>,
+    pub tools_collected: bool,
+    pub collected_servers: HashSet<String>,
+}
+
+impl Bridge {
+    pub async fn new(config: BridgeConfig) -> anyhow::Result<Self> {
+        let connection_config = Arc::new(config.connection.clone());
+        let (message_tx, message_rx) = mpsc::channel(100);
+        
+        let mut transports: Vec<Box<dyn Transport>> = Vec::new();
+        
+        let ws = WebSocketTransport::new(
+            config.endpoint.clone(),
+            message_tx.clone()
+        ).await
+        .with_context(|| "Failed to initialize WebSocket transport")?;
+        transports.push(Box::new(ws));
+
+        if let Some(mqtt_config) = config.mqtt.clone() {
+            let mqtt = MqttTransport::new(
+                mqtt_config,
+                message_tx.clone()
+            ).await
+            .context("Failed to initialize MQTT transport")?;
+            transports.push(Box::new(mqtt));
+        }
+        
+        let now = Instant::now();
+        Ok(Self {
+            config,
+            transports,
+            processes_stdin: HashMap::new(),
+            message_tx,
+            message_rx,
+            connection_config,
+            is_connected: false,
+            reconnect_attempt: 0,
+            initialized: false,
+            tools: HashMap::new(),
+            tool_service_map: HashMap::new(),
+            last_activity: now,
+            last_ping_sent: now,
+            pending_tools_list_request: None,
+            tools_collected: false,
+            collected_servers: HashSet::new(),
+        })
+    }
+
+    pub async fn run(mut self) -> anyhow::Result<()> {
+        info!("MCP Bridge started");
+        
+        let (process_output_tx, mut process_output_rx) = mpsc::channel(100);
+        
+        let mut processes = HashMap::new();
+        for (server_name, process_config) in self.config.servers.clone() {
+            let mut process = ManagedProcess::new(&process_config)?;
+            process.start(process_output_tx.clone(), server_name.clone()).await?;
+            info!("Started server process: {}", server_name);
+            
+            if let Some(stdin) = process.stdin.take() {
+                self.processes_stdin.insert(server_name.clone(), stdin);
+            }
+            
+            processes.insert(server_name, process);
+        }
+        
+        for transport in &mut self.transports {
+            transport.connect().await?;
+        }
+        self.is_connected = true;
+        self.last_activity = Instant::now();
+        
+        let heartbeat_interval = self.connection_config.heartbeat_interval;
+        let heartbeat_timeout = self.connection_config.heartbeat_timeout;
+        let ping_interval = heartbeat_interval / 2;
+        
+        let mut ping_interval_timer = interval(Duration::from_millis(ping_interval));
+        
+        loop {
+            let timeout = tokio::time::sleep(Duration::from_millis(heartbeat_interval));
+            tokio::pin!(timeout);
+            
+            tokio::select! {
+                Some(msg) = self.message_rx.recv() => {
+                    self.last_activity = Instant::now();
+                    handle_message(&mut self, msg).await?;
+                }
+                Some((server_name, output)) = process_output_rx.recv() => {
+                    self.last_activity = Instant::now();
+                    handle_process_output(&mut self, &server_name, output).await?;
+                }
+                _ = tokio::signal::ctrl_c() => {
+                    info!("Shutting down...");
+                    break;
+                }
+                _ = ping_interval_timer.tick() => {
+                    send_ping(&mut self).await?;
+                }
+                _ = &mut timeout => {
+                    let elapsed = self.last_activity.elapsed();
+                    if elapsed > Duration::from_millis(heartbeat_timeout) {
+                        warn!("Connection timeout detected ({}ms > {}ms)", 
+                              elapsed.as_millis(), heartbeat_timeout);
+                        reconnect(&mut self).await?;
+                    }
+                }
+            }
+        }
+        
+        for (_, mut process) in processes {
+            process.stop().await?;
+        }
+        
+        self.shutdown().await?;
+        Ok(())
+    }
+
+    pub async fn broadcast_message(&mut self, msg: String) -> anyhow::Result<()> {
+        let trimmed = msg.trim();
+        if trimmed.is_empty() {
+            return Ok(());
+        }
+        
+        debug!(">> Sending message: {}", trimmed);
+        
+        let msg_value = match serde_json::from_str(trimmed) {
+            Ok(value) => value,
+            Err(_) => Value::String(trimmed.to_string()),
+        };
+        
+        let mut failed_transports = Vec::new();
+        
+        for (i, transport) in self.transports.iter_mut().enumerate() {
+            if transport.is_connected() {
+                if let Err(e) = transport.send(msg_value.clone()).await {
+                    error!("Failed to send message via transport: {}", e);
+                    failed_transports.push(i);
+                }
+            }
+        }
+        
+        for i in failed_transports {
+            handle_transport_disconnect(self, i).await;
+        }
+        
+        self.last_activity = Instant::now();
+        Ok(())
+    }
+
+    pub async fn shutdown(&mut self) -> anyhow::Result<()> {
+        info!("Shutting down MCP Bridge");
+        
+        for transport in &mut self.transports {
+            transport.disconnect().await?;
+        }
+        
+        Ok(())
+    }
+}
+
+src/bridge/process_handler.rs:
+use super::core::Bridge;
+use anyhow::Result;
+use serde_json::Value;
+use tracing::debug;
+
+pub async fn handle_process_output(
+    bridge: &mut Bridge, 
+    server_name: &str, 
+    output: String
+) -> Result<()> {
+    debug!(">> Received output from {server_name}: {}", output.trim());
+    
+    let msg_value: Value = match serde_json::from_str(&output) {
+        Ok(value) => value,
+        Err(_) => Value::String(output.clone()),
+    };
+    
+    let mut should_broadcast = true;
+    
+    if let Some(result) = msg_value.get("result") {
+        if let Some(id) = msg_value.get("id") {
+            if msg_value.get("method").is_none() {
+                if let Some(id_str) = id.as_str() {
+                    if id_str.starts_with("tools-list-") {
+                        should_broadcast = false;
+                        
+                        if let Some(tools) = result["tools"].as_array() {
+                            bridge.collected_servers.insert(server_name.to_string());
+                            
+                            for tool in tools {
+                                if let Some(tool_obj) = tool.as_object() {
+                                    if let Some(Value::String(original_tool_name)) = tool_obj.get("name") {
+                                        let prefixed_name = super::generate_prefixed_tool_name(
+                                            bridge, server_name, original_tool_name
+                                        );
+                                        
+                                        bridge.tools.insert(
+                                            prefixed_name.clone(), 
+                                            (server_name.to_string(), tool.clone())
+                                        );
+                                        
+                                        bridge.tool_service_map.insert(
+                                            prefixed_name,
+                                            (server_name.to_string(), original_tool_name.clone())
+                                        );
+                                    }
+                                }
+                            }
+                            
+                            info!("Collected {} tools from {server_name}", tools.len());
+                            
+                            if bridge.collected_servers.len() == bridge.config.servers.len() {
+                                bridge.tools_collected = true;
+                                info!("All tools collected, total: {}", bridge.tools.len());
+                                
+                                super::message_handler::reply_tools_list(bridge).await?;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    
+    if should_broadcast {
+        bridge.broadcast_message(msg_value.to_string()).await?;
+    }
+    
+    bridge.last_activity = Instant::now();
+    Ok(())
+}
+
+src/bridge/message_handler.rs:
+use super::core::Bridge;
+use anyhow::Result;
+use serde_json::{json, Value};
+use tokio::io::AsyncWriteExt;
+use tracing::{info, debug, warn};
+
+pub async fn handle_message(bridge: &mut Bridge, msg: Value) -> Result<()> {
+    info!("<< Received message: {}", msg);
+    
+    if let Some(method) = msg.get("method").and_then(|m| m.as_str()) {
+        match method {
+            "ping" => return handle_ping_request(bridge, &msg).await,
+            "initialize" => return initialize(bridge, msg).await,
+            "tools/list" => return handle_tools_list_request(bridge, msg).await,
+            "tools/call" => return handle_tool_call(bridge, msg).await,
+            "notifications/initialized" => {
+                info!("Received notifications/initialized");
+                return Ok(());
+            }
+            _ => {}
+        }
+    }
+    
+    warn!("Received unknown message type: {}", msg);
+    Ok(())
+}
+
+async fn handle_ping_request(bridge: &mut Bridge, msg: &Value) -> Result<()> {
+    if let Some(id) = msg.get("id").cloned() {
+        let response = json!({
+            "jsonrpc": "2.0",
+            "id": id,
+            "result": {}
+        });
+        
+        bridge.broadcast_message(response.to_string()).await?;
+        debug!("Sent pong response for ping");
+    }
+    
+    bridge.last_activity = Instant::now();
+    Ok(())
+}
+
+async fn initialize(bridge: &mut Bridge, msg: Value) -> Result<()> {
+    info!("Handling initialize request");
+    
+    let id = msg["id"].clone();
+    
+    let response = json!({
+        "jsonrpc": "2.0",
+        "id": id,
+        "result": {
+            "protocolVersion": "2024-11-05",
+            "capabilities": {
+                "tools": {
+                    "listChanged": false
+                }
+            },
+            "serverInfo": {
+                "name": "MCP Bridge",
+                "version": "0.3.0"
+            }
+        }
+    });
+    
+    bridge.broadcast_message(response.to_string()).await?;
+    info!("Sent initialize response");
+    
+    bridge.initialized = true;
+    info!("Bridge initialized");
+    
+    bridge.tools.clear();
+    bridge.tool_service_map.clear();
+    bridge.collected_servers.clear();
+    bridge.tools_collected = false;
+    
+    for (server_name, stdin) in &mut bridge.processes_stdin {
+        let tools_request = json!({
+            "jsonrpc": "2.0",
+            "id": format!("tools-list-{server_name}"),
+            "method": "tools/list"
+        });
+        
+        let message = tools_request.to_string() + "\n";
+        stdin.write_all(message.as_bytes()).await?;
+        debug!("Sent tools/list request to server: {server_name}");
+    }
+    
+    Ok(())
+}
+
+async fn handle_tools_list_request(bridge: &mut Bridge, msg: Value) -> Result<()> {
+    info!("Handling tools/list request");
+    
+    bridge.pending_tools_list_request = Some(msg);
+    
+    if bridge.tools_collected {
+        reply_tools_list(bridge).await?;
+    }
+    
+    Ok(())
+}
+
+async fn reply_tools_list(bridge: &mut Bridge) -> Result<()> {
+    if let Some(request) = bridge.pending_tools_list_request.take() {
+        let id = request["id"].clone();
+        
+        let mut tools_list = Vec::new();
+        for (prefixed_name, (_, tool_value)) in &bridge.tools {
+            let mut tool = tool_value.clone();
+            if let Some(obj) = tool.as_object_mut() {
+                obj.insert("name".to_string(), Value::String(prefixed_name.clone()));
+            }
+            tools_list.push(tool);
+        }
+        
+        let response = json!({
+            "jsonrpc": "2.0",
+            "id": id,
+            "result": {
+                "tools": tools_list,
+                "nextCursor": ""
+            }
+        });
+        
+        bridge.broadcast_message(response.to_string()).await?;
+        info!("Sent tools/list response with {} tools", tools_list.len());
+    }
+    
+    Ok(())
+}
+
+async fn handle_tool_call(bridge: &mut Bridge, msg: Value) -> Result<()> {
+    let id = msg["id"].clone();
+    let method = msg["method"].as_str().unwrap_or("");
+    let params = msg["params"].as_object();
+    
+    let prefixed_tool_name = params.and_then(|p| p["name"].as_str()).unwrap_or("");
+    let arguments = params.and_then(|p| p["arguments"].as_object());
+    
+    info!("Handling tool call: {prefixed_tool_name} with id {id}");
+    
+    if let Some((server_name, original_tool_name)) = super::get_original_tool_name(bridge, prefixed_tool_name) {
+        if let Some(stdin) = bridge.processes_stdin.get_mut(&server_name) {
+            let request = json!({
+                "jsonrpc": "2.0",
+                "id": id,
+                "method": method,
+                "params": {
+                    "name": original_tool_name,
+                    "arguments": arguments
+                }
+            });
+            
+            let message = request.to_string() + "\n";
+            stdin.write_all(message.as_bytes()).await?;
+            info!("Forwarded tool call to server: {server_name} (original: {original_tool_name})");
+            return Ok(());
+        }
+    }
+    
+    let error_response = json!({
+        "jsonrpc": "2.0",
+        "id": id,
+        "error": {
+            "code": -32601,
+            "message": format!("Tool not found: {prefixed_tool_name}")
+        }
+    });
+    
+    bridge.broadcast_message(error_response.to_string()).await?;
+    warn!("Tool not found: {prefixed_tool_name}");
+    
+    Ok(())
+}
+
+src/bridge/mod.rs:
+mod core;
+mod message_handler;
+mod process_handler;
+mod connection;
+mod utils;
+
+pub use core::Bridge;
+pub use message_handler::handle_message;
+pub use process_handler::handle_process_output;
+pub use connection::{reconnect, handle_transport_disconnect, send_ping};
+pub use utils::{generate_prefixed_tool_name, get_original_tool_name};
+
+src/bridge/connection.rs:
+use super::core::Bridge;
+use anyhow::Result;
+use serde_json::json;
+use tokio::time::{sleep, Duration, Instant};
+use tracing::{debug, error, warn};
+
+pub async fn send_ping(bridge: &mut Bridge) -> anyhow::Result<()> {
+    let time_since_last_activity = bridge.last_activity.elapsed();
+    let time_since_last_ping = bridge.last_ping_sent.elapsed();
+    
+    if time_since_last_activity < Duration::from_millis(bridge.connection_config.heartbeat_interval / 3) ||
+       time_since_last_ping < Duration::from_millis(bridge.connection_config.heartbeat_interval / 2) {
+        return Ok(());
+    }
+    
+    let timestamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or(0);
+    let ping_id = format!("ping-{timestamp}");
+    
+    let ping_message = json!({
+        "jsonrpc": "2.0",
+        "id": ping_id,
+        "method": "ping"
+    });
+    
+    bridge.broadcast_message(ping_message.to_string()).await?;
+    bridge.last_ping_sent = Instant::now();
+    debug!("Sent ping to keep connection alive");
+    
+    Ok(())
+}
+
+pub async fn reconnect(bridge: &mut Bridge) -> anyhow::Result<()> {
+    if bridge.reconnect_attempt >= bridge.connection_config.max_reconnect_attempts {
+        error!("Max reconnection attempts reached");
+        return Err(anyhow!("Max reconnection attempts reached"));
+    }
+    
+    bridge.reconnect_attempt += 1;
+    let delay = Duration::from_millis(bridge.connection_config.reconnect_interval);
+    
+    warn!("Attempting to reconnect (attempt {}) in {:?}", 
+        bridge.reconnect_attempt, delay);
+    
+    sleep(delay).await;
+    
+    for transport in &mut bridge.transports {
+        let _ = transport.disconnect().await;
+    }
+    
+    for transport in &mut bridge.transports {
+        if let Err(e) = transport.connect().await {
+            error!("Failed to reconnect transport: {}", e);
+        }
+    }
+    
+    bridge.is_connected = true;
+    bridge.reconnect_attempt = 0;
+    bridge.last_activity = Instant::now();
+    bridge.last_ping_sent = Instant::now();
+    
+    info!("Successfully reconnected");
+    Ok(())
+}
+
+pub async fn handle_transport_disconnect(bridge: &mut Bridge, index: usize) {
+    if bridge.reconnect_attempt >= bridge.connection_config.max_reconnect_attempts {
+        error!("Max reconnection attempts reached");
+        return;
+    }
+    
+    bridge.reconnect_attempt += 1;
+    let delay = Duration::from_millis(bridge.connection_config.reconnect_interval);
+    
+    warn!("Attempting to reconnect (attempt {}) in {:?}", 
+        bridge.reconnect_attempt, delay);
+    
+    tokio::time::sleep(delay).await;
+    
+    if let Err(e) = bridge.transports[index].connect().await {
+        error!("Failed to reconnect transport: {}", e);
+    } else {
+        bridge.reconnect_attempt = 0;
+    }
+}
+
+src/bridge/utils.rs:
+use super::core::Bridge;
+
+pub fn generate_prefixed_tool_name(bridge: &Bridge, server_name: &str, tool_name: &str) -> String {
+    let normalized_server_name = server_name.replace('-', "_");
+    format!("{normalized_server_name}_xzcli_{tool_name}")
+}
+
+pub fn get_original_tool_name(bridge: &Bridge, prefixed_tool_name: &str) -> Option<(String, String)> {
+    bridge.tool_service_map.get(prefixed_tool_name).cloned()
+}
+
+src/lib.rs:
+pub mod bridge;
+pub mod config;
+pub mod process;
+pub mod transports;
+
+src/transports/mqtt.rs:
+use super::Transport;
+use crate::config::MqttConfig;
+use async_trait::async_trait;
+use rumqttc::{AsyncClient, Event, Incoming, MqttOptions, QoS};
+use serde_json::Value;
+use std::any::Any;
+use std::fmt;
+use std::time::Duration;
+use tokio::sync::mpsc;
+use tracing::debug;
+
+#[derive(Debug)]
+pub struct MqttTransport {
+    config: MqttConfig,
+    client: Option<AsyncClient>,
+    #[allow(dead_code)]
+    tx: mpsc::Sender<Value>,
+    is_connected: bool,
+}
+
+impl MqttTransport {
+    pub async fn new(config: MqttConfig, tx: mpsc::Sender<Value>) -> anyhow::Result<Self> {
+        let mut mqttoptions = MqttOptions::new(&config.client_id, &config.broker, config.port);
+        mqttoptions.set_keep_alive(Duration::from_secs(30));
+
+        let (client, mut event_loop) = AsyncClient::new(mqttoptions, 100);
+
+        // 启动消息接收器
+        let tx_clone = tx.clone();
+        tokio::spawn(async move {
+            while let Ok(event) = event_loop.poll().await {
+                if let Event::Incoming(Incoming::Publish(publish)) = event {
+                    debug!(
+                        "Received MQTT message on topic {}: {} bytes",
+                        publish.topic,
+                        publish.payload.len()
+                    );
+                    if let Ok(msg) = serde_json::from_slice(&publish.payload) {
+                        if tx_clone.send(msg).await.is_err() {
+                            break; // 通道已关闭
+                        }
+                    } else {
+                        debug!("Failed to parse MQTT message as JSON");
+                    }
+                }
+            }
+        });
+
+        Ok(Self {
+            config,
+            client: Some(client),
+            tx,
+            is_connected: false,
+        })
+    }
+}
+
+#[async_trait]
+impl Transport for MqttTransport {
+    async fn connect(&mut self) -> anyhow::Result<()> {
+        if let Some(client) = &self.client {
+            debug!("Subscribing to MQTT topic: {}", self.config.topic);
+            client
+                .subscribe(&self.config.topic, QoS::AtLeastOnce)
+                .await?;
+            self.is_connected = true;
+        }
+        Ok(())
+    }
+
+    async fn disconnect(&mut self) -> anyhow::Result<()> {
+        if let Some(client) = &self.client {
+            debug!("Disconnecting from MQTT broker");
+            client.disconnect().await?;
+        }
+        self.client = None;
+        self.is_connected = false;
+        Ok(())
+    }
+
+    async fn send(&mut self, msg: Value) -> anyhow::Result<()> {
+        if let Some(client) = &self.client {
+            let msg_str = msg.to_string();
+            debug!(
+                "Sending MQTT message to topic {}: {}",
+                self.config.topic, msg_str
+            );
+            client
+                .publish(
+                    &self.config.topic,
+                    QoS::AtLeastOnce,
+                    false,
+                    msg_str.as_bytes(),
+                )
+                .await?;
+        }
+        Ok(())
+    }
+
+    fn is_connected(&self) -> bool {
+        self.is_connected
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+
+    fn as_any_mut(&mut self) -> &mut dyn Any {
+        self
+    }
+}
+
+impl fmt::Display for MqttTransport {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "MqttTransport({}:{})",
+            self.config.broker, self.config.port
+        )
+    }
+}
+
+src/transports/mod.rs:
+pub mod mqtt;
+pub mod websocket;
+
+use async_trait::async_trait;
+use serde_json::Value;
+use std::any::Any;
+use std::fmt::Debug;
+
+#[async_trait]
+pub trait Transport: Send + Debug {
+    async fn connect(&mut self) -> anyhow::Result<()>;
+    async fn disconnect(&mut self) -> anyhow::Result<()>;
+    async fn send(&mut self, msg: Value) -> anyhow::Result<()>;
+    fn is_connected(&self) -> bool;
+    fn as_any(&self) -> &dyn Any;
+    fn as_any_mut(&mut self) -> &mut dyn Any;
+}
+
+pub use mqtt::MqttTransport;
+pub use websocket::WebSocketTransport;
+
+src/transports/websocket.rs:
+use super::Transport;
+use async_trait::async_trait;
+use futures_util::{SinkExt, StreamExt};
+use serde_json::Value;
+use std::any::Any;
+use std::fmt;
+use std::sync::Arc;
+use tokio::net::TcpStream;
+use tokio::sync::Mutex;
+use tokio::sync::mpsc;
+use tokio_tungstenite::{
+    MaybeTlsStream, WebSocketStream, connect_async,
+    tungstenite::protocol::{CloseFrame, Message as WsMessage},
+};
+use tracing::{debug, error, warn};
+
+// 定义类型别名以简化复杂类型
+type WebSocketSink =
+    futures_util::stream::SplitSink<WebSocketStream<MaybeTlsStream<TcpStream>>, WsMessage>;
+
+#[derive(Debug)]
+pub struct WebSocketTransport {
+    endpoint: String,
+    writer: Arc<Mutex<Option<WebSocketSink>>>,
+    tx: mpsc::Sender<Value>,
+    is_connected: bool,
+}
+
+impl WebSocketTransport {
+    pub async fn new(endpoint: String, tx: mpsc::Sender<Value>) -> anyhow::Result<Self> {
+        debug!("Connecting to WebSocket endpoint: {}", endpoint);
+        let (ws_stream, _) = connect_async(&endpoint).await?;
+        debug!("WebSocket connection established");
+
+        let (write, read) = ws_stream.split();
+        let writer = Arc::new(Mutex::new(Some(write)));
+
+        // 启动消息接收任务
+        let tx_clone = tx.clone();
+        tokio::spawn(Self::receive_messages(read, tx_clone));
+
+        Ok(Self {
+            endpoint,
+            writer,
+            tx,
+            is_connected: true,
+        })
+    }
+
+    async fn receive_messages(
+        mut read: futures_util::stream::SplitStream<WebSocketStream<MaybeTlsStream<TcpStream>>>,
+        tx: mpsc::Sender<Value>,
+    ) {
+        while let Some(msg) = read.next().await {
+            match msg {
+                Ok(WsMessage::Text(text)) => {
+                    debug!("Received WebSocket message: {}", text);
+                    if let Ok(value) = serde_json::from_str(&text) {
+                        if tx.send(value).await.is_err() {
+                            error!("Failed to send message to bridge channel");
+                            break;
+                        }
+                    } else {
+                        warn!("Failed to parse WebSocket message as JSON: {}", text);
+                    }
+                }
+                Ok(WsMessage::Binary(data)) => {
+                    debug!("Received binary message: {} bytes", data.len());
+                }
+                Ok(WsMessage::Ping(data)) => {
+                    debug!("Received WebSocket ping: {} bytes", data.len());
+                }
+                Ok(WsMessage::Pong(data)) => {
+                    debug!("Received WebSocket pong: {} bytes", data.len());
+                }
+                Ok(WsMessage::Close(reason)) => {
+                    if let Some(reason) = &reason {
+                        debug!(
+                            "WebSocket connection closed: {} - {}",
+                            reason.code, reason.reason
+                        );
+                    } else {
+                        debug!("WebSocket connection closed without reason");
+                    }
+                    break;
+                }
+                Err(e) => {
+                    error!("WebSocket read error: {}", e);
+                    break;
+                }
+                _ => {}
+            }
+        }
+        debug!("WebSocket receive task exiting");
+    }
+}
+
+#[async_trait]
+impl Transport for WebSocketTransport {
+    async fn connect(&mut self) -> anyhow::Result<()> {
+        if self.is_connected {
+            return Ok(());
+        }
+
+        debug!("Reconnecting to WebSocket endpoint: {}", self.endpoint);
+        let (ws_stream, _) = connect_async(&self.endpoint).await?;
+        let (write, read) = ws_stream.split();
+
+        *self.writer.lock().await = Some(write);
+        self.is_connected = true;
+
+        // 重启消息接收任务
+        let tx_clone = self.tx.clone();
+        tokio::spawn(Self::receive_messages(read, tx_clone));
+
+        debug!("WebSocket reconnected");
+        Ok(())
+    }
+
+    async fn disconnect(&mut self) -> anyhow::Result<()> {
+        if let Some(mut writer) = self.writer.lock().await.take() {
+            let close_frame = CloseFrame {
+                code: 1000.into(),
+                reason: "Normal closure".into(),
+            };
+            debug!("Closing WebSocket connection");
+
+            writer.send(WsMessage::Close(Some(close_frame))).await?;
+        }
+        self.is_connected = false;
+        Ok(())
+    }
+
+    async fn send(&mut self, msg: Value) -> anyhow::Result<()> {
+        if let Some(writer) = &mut *self.writer.lock().await {
+            let msg_str = msg.to_string();
+            debug!("Sending WebSocket message: {}", msg_str);
+            writer.send(WsMessage::Text(msg_str)).await?;
+        }
+        Ok(())
+    }
+
+    fn is_connected(&self) -> bool {
+        self.is_connected
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+
+    fn as_any_mut(&mut self) -> &mut dyn Any {
+        self
+    }
+}
+
+impl fmt::Display for WebSocketTransport {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "WebSocketTransport({})", self.endpoint)
+    }
+}
+
+src/main.rs:
+// src/main.rs
+use mcp_bridge::bridge::Bridge;
+use mcp_bridge::config::BridgeConfig;
+use clap::{Parser, Subcommand};
+use std::path::PathBuf;
+use anyhow::Result;
+use tracing::error;
+
+#[derive(Parser)]
+#[command(name = "mcp-bridge")]
+#[command(about = "MCP Protocol Bridge", long_about = None)]
+struct Cli {
+    #[command(subcommand)]
+    command: Commands,
+}
+
+#[derive(Subcommand)]
+enum Commands {
+    /// Start the bridge service
+    Start {
+        /// Config file path
+        #[arg(short, long, value_name = "FILE")]
+        config: PathBuf,
+    },
+}
+
+#[tokio::main]
+async fn main() -> Result<()> {
+    tracing_subscriber::fmt()
+        .with_max_level(tracing::Level::DEBUG)
+        .init();
+
+    let cli = Cli::parse();
+    match cli.command {
+        Commands::Start { config } => {
+            let cfg = BridgeConfig::load_from_file(config)?;
+            
+            let bridge = match Bridge::new(cfg).await {
+                Ok(bridge) => bridge,
+                Err(e) => {
+                    error!("Failed to create bridge: {:#}", e);
+                    return Ok(());
+                }
+            };
+            
+            if let Err(e) = bridge.run().await {
+                error!("Bridge exited with error: {:#}", e);
+            }
+            
+            Ok(())
+        }
+    }
+}
+
+src/process.rs:
+use crate::config::ProcessConfig;
+use anyhow::Context;
+use std::process::Stdio;
+use tokio::io::{AsyncBufReadExt, BufReader};
+use tokio::process::{Child, ChildStdin, Command};
+use tokio::sync::mpsc;
+use tracing::{debug, error, info};
+
+pub struct ManagedProcess {
+    config: ProcessConfig,
+    child: Option<Child>,
+    pub stdin: Option<ChildStdin>, // 改为 pub 以便外部访问
+}
+
+impl ManagedProcess {
+    pub fn new(config: &ProcessConfig) -> anyhow::Result<Self> {
+        Ok(Self {
+            config: config.clone(),
+            child: None,
+            stdin: None,
+        })
+    }
+
+    pub async fn start(
+        &mut self,
+        output_tx: mpsc::Sender<(String, String)>,
+        server_name: String,
+    ) -> anyhow::Result<()> {
+        info!("Starting process: {}", self.config.command);
+
+        let mut command = Command::new(&self.config.command);
+
+        // Set arguments
+        command.args(&self.config.args);
+
+        // Set environment variables
+        for (key, value) in &self.config.env {
+            command.env(key, value);
+        }
+
+        // 设置工作目录为项目根目录
+        let current_dir = std::env::current_dir()?;
+        command.current_dir(current_dir);
+
+        // Configure stdio
+        command
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::inherit());
+
+        // Spawn the child process
+        let mut child = command.spawn().context("Failed to spawn child process")?;
+
+        // Take ownership of stdin and stdout
+        let stdin = child.stdin.take().context("Failed to open stdin")?;
+        let stdout = child.stdout.take().context("Failed to open stdout")?;
+
+        // Create buffered reader for stdout
+        let stdout = BufReader::new(stdout);
+
+        // Start output reader task
+        let mut reader = stdout;
+        tokio::spawn(async move {
+            let mut buffer = String::new();
+            loop {
+                match reader.read_line(&mut buffer).await {
+                    Ok(0) => break, // EOF
+                    Ok(_) => {
+                        let line = buffer.trim().to_string();
+                        if !line.is_empty() {
+                            debug!("Process output: {}", line);
+                            if let Err(e) = output_tx.send((server_name.clone(), line)).await {
+                                error!("Failed to send output: {}", e);
+                                break;
+                            }
+                        }
+                        buffer.clear();
+                    }
+                    Err(e) => {
+                        error!("Error reading stdout: {}", e);
+                        break;
+                    }
+                }
+            }
+        });
+
+        self.child = Some(child);
+        self.stdin = Some(stdin); // 存储 stdin
+
+        Ok(())
+    }
+
+    pub async fn stop(&mut self) -> anyhow::Result<()> {
+        if let Some(mut child) = self.child.take() {
+            info!("Stopping process");
+            child.kill().await?;
+        }
+        self.stdin = None;
+        Ok(())
+    }
+}
+

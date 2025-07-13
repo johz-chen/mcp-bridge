@@ -57,8 +57,8 @@ async fn test_config_loading() {
 
 // 在集成测试中定义 Bridge 结构体的简化版本
 struct TestBridge {
+    #[allow(dead_code)]
     config: BridgeConfig,
-    // 只需要测试中使用的字段
 }
 
 impl TestBridge {
