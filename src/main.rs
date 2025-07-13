@@ -1,7 +1,8 @@
-use mcp_bridge::{bridge, config::BridgeConfig};
-
+// src/main.rs
 use anyhow::Result;
 use clap::{Parser, Subcommand};
+use mcp_bridge::bridge::Bridge;
+use mcp_bridge::config::BridgeConfig;
 use std::path::PathBuf;
 use tracing::error;
 
@@ -25,7 +26,6 @@ enum Commands {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    // 初始化日志
     tracing_subscriber::fmt()
         .with_max_level(tracing::Level::DEBUG)
         .init();
@@ -35,8 +35,7 @@ async fn main() -> Result<()> {
         Commands::Start { config } => {
             let cfg = BridgeConfig::load_from_file(config)?;
 
-            // 创建并运行单个bridge实例
-            let bridge = match bridge::Bridge::new(cfg).await {
+            let bridge = match Bridge::new(cfg).await {
                 Ok(bridge) => bridge,
                 Err(e) => {
                     error!("Failed to create bridge: {:#}", e);
