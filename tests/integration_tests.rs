@@ -1,7 +1,7 @@
 use mcp_bridge::config::{BridgeConfig, ConnectionConfig, ProcessConfig};
-use tokio::sync::mpsc;
 use std::collections::HashMap;
-use tokio::time::{timeout, Duration};
+use tokio::sync::mpsc;
+use tokio::time::{Duration, timeout};
 
 #[tokio::test]
 async fn test_process_start_and_stop() {
@@ -10,19 +10,19 @@ async fn test_process_start_and_stop() {
         args: vec!["hello world".to_string()],
         env: HashMap::new(),
     };
-    
+
     let (tx, mut rx) = mpsc::channel(10);
     let server_name = "test_server".to_string();
-    
+
     let mut process = mcp_bridge::process::ManagedProcess::new(&config).unwrap();
     process.start(tx, server_name.clone()).await.unwrap();
-    
+
     // Give the process a moment to start
     tokio::time::sleep(Duration::from_millis(100)).await;
-    
+
     // Stop the process
     process.stop().await.unwrap();
-    
+
     // Check output
     let output = timeout(Duration::from_secs(1), rx.recv()).await;
     assert!(output.is_ok());
@@ -50,7 +50,7 @@ async fn test_config_loading() {
         connection: ConnectionConfig::default(),
         mqtt: None,
     };
-    
+
     assert_eq!(config.servers.len(), 1);
     assert_eq!(config.servers["test_server"].command, "echo");
 }
@@ -65,7 +65,7 @@ impl TestBridge {
     fn new(config: BridgeConfig) -> Self {
         Self { config }
     }
-    
+
     // 复制 generate_prefixed_tool_name 方法
     fn generate_prefixed_tool_name(&self, server_name: &str, tool_name: &str) -> String {
         let normalized_server_name = server_name.replace('-', "_");
@@ -81,7 +81,7 @@ async fn test_tool_name_generation() {
         connection: ConnectionConfig::default(),
         mqtt: None,
     };
-    
+
     // 使用本地定义的 TestBridge
     let bridge = TestBridge::new(config);
     let name = bridge.generate_prefixed_tool_name("my-server", "my-tool");

@@ -20,19 +20,27 @@ pub enum ConfigError {
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ConnectionConfig {
     #[serde(default = "default_heartbeat_interval")]
-    pub heartbeat_interval: u64,  // 毫秒
+    pub heartbeat_interval: u64, // 毫秒
     #[serde(default = "default_heartbeat_timeout")]
-    pub heartbeat_timeout: u64,   // 毫秒
+    pub heartbeat_timeout: u64, // 毫秒
     #[serde(default = "default_reconnect_interval")]
-    pub reconnect_interval: u64,  // 毫秒
+    pub reconnect_interval: u64, // 毫秒
     #[serde(default = "default_max_reconnect_attempts")]
     pub max_reconnect_attempts: u32,
 }
 
-fn default_heartbeat_interval() -> u64 { 30000 }
-fn default_heartbeat_timeout() -> u64 { 10000 }
-fn default_reconnect_interval() -> u64 { 5000 }
-fn default_max_reconnect_attempts() -> u32 { 10 }
+fn default_heartbeat_interval() -> u64 {
+    30000
+}
+fn default_heartbeat_timeout() -> u64 {
+    10000
+}
+fn default_reconnect_interval() -> u64 {
+    5000
+}
+fn default_max_reconnect_attempts() -> u32 {
+    10
+}
 
 // 本地进程配置
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -87,27 +95,35 @@ impl BridgeConfig {
     /// 验证配置有效性
     fn validate(&self) -> Result<(), ConfigError> {
         if self.endpoint.is_empty() {
-            return Err(ConfigError::InvalidFormat("mcpEndpoint cannot be empty".into()));
+            return Err(ConfigError::InvalidFormat(
+                "mcpEndpoint cannot be empty".into(),
+            ));
         }
 
         if self.servers.is_empty() {
-            return Err(ConfigError::InvalidFormat("mcpServers cannot be empty".into()));
+            return Err(ConfigError::InvalidFormat(
+                "mcpServers cannot be empty".into(),
+            ));
         }
 
         for (name, server) in &self.servers {
             if server.command.is_empty() {
-                return Err(ConfigError::InvalidFormat(
-                    format!("process.command for server {name} cannot be empty")
-                ));
+                return Err(ConfigError::InvalidFormat(format!(
+                    "process.command for server {name} cannot be empty"
+                )));
             }
         }
-        
+
         if let Some(mqtt) = &self.mqtt {
             if mqtt.broker.is_empty() {
-                return Err(ConfigError::InvalidFormat("mqtt.broker cannot be empty".into()));
+                return Err(ConfigError::InvalidFormat(
+                    "mqtt.broker cannot be empty".into(),
+                ));
             }
             if mqtt.topic.is_empty() {
-                return Err(ConfigError::InvalidFormat("mqtt.topic cannot be empty".into()));
+                return Err(ConfigError::InvalidFormat(
+                    "mqtt.topic cannot be empty".into(),
+                ));
             }
         }
 

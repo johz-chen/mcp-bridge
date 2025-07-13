@@ -1,8 +1,8 @@
-use mcp_bridge::{config::BridgeConfig, bridge};
+use mcp_bridge::{bridge, config::BridgeConfig};
 
+use anyhow::Result;
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
-use anyhow::Result;
 use tracing::error;
 
 #[derive(Parser)]
@@ -34,7 +34,7 @@ async fn main() -> Result<()> {
     match cli.command {
         Commands::Start { config } => {
             let cfg = BridgeConfig::load_from_file(config)?;
-            
+
             // 创建并运行单个bridge实例
             let bridge = match bridge::Bridge::new(cfg).await {
                 Ok(bridge) => bridge,
@@ -43,11 +43,11 @@ async fn main() -> Result<()> {
                     return Ok(());
                 }
             };
-            
+
             if let Err(e) = bridge.run().await {
                 error!("Bridge exited with error: {:#}", e);
             }
-            
+
             Ok(())
         }
     }
