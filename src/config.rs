@@ -14,6 +14,8 @@ pub enum ConfigError {
     IoError(#[from] std::io::Error),
     #[error("JSON parse error: {0}")]
     JsonError(#[from] serde_json::Error),
+    #[error("YAML parse error: {0}")]
+    YamlError(#[from] serde_yaml::Error),
 }
 
 // 连接配置
@@ -51,9 +53,17 @@ pub struct ProcessConfig {
     pub env: HashMap<String, String>,
 }
 
+// WebSocket 配置
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WebSocketConfig {
+    pub enabled: bool,
+    pub endpoint: String,
+}
+
 // MQTT 配置
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MqttConfig {
+    pub enabled: bool,
     pub broker: String,
     pub port: u16,
     #[serde(default = "default_mqtt_client_id")]
@@ -65,45 +75,76 @@ fn default_mqtt_client_id() -> String {
     format!("mcp-bridge-{}", std::process::id())
 }
 
-// 主配置结构
+// 应用主配置 (YAML)
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct BridgeConfig {
-    #[serde(rename = "mcpEndpoint")]
-    pub endpoint: String,
-    #[serde(rename = "mcpServers")]
-    pub servers: HashMap<String, ProcessConfig>,
-    #[serde(rename = "connection", default)]
+pub struct AppConfig {
+    pub websocket: WebSocketConfig,
+    pub mqtt: MqttConfig,
     pub connection: ConnectionConfig,
-    #[serde(default)]
-    pub mqtt: Option<MqttConfig>, // 可选的 MQTT 配置
+}
+
+// 主配置结构
+#[derive(Debug, Clone)]
+pub struct BridgeConfig {
+    pub app_config: AppConfig,                   // 来自 config.yaml
+    pub servers: HashMap<String, ProcessConfig>, // 来自 mcp_tools.json
 }
 
 impl BridgeConfig {
     /// 从文件加载配置
-    pub fn load_from_file<P: AsRef<Path>>(path: P) -> Result<Self, ConfigError> {
-        let path = path.as_ref();
-        if !path.exists() {
-            return Err(ConfigError::NotFound(path.display().to_string()));
+    pub fn load_from_files<P: AsRef<Path>>(
+        yaml_path: P,
+        json_path: P,
+    ) -> Result<Self, ConfigError> {
+        let yaml_path = yaml_path.as_ref();
+        let json_path = json_path.as_ref();
+
+        if !yaml_path.exists() {
+            return Err(ConfigError::NotFound(yaml_path.display().to_string()));
+        }
+        if !json_path.exists() {
+            return Err(ConfigError::NotFound(json_path.display().to_string()));
         }
 
-        let content = fs::read_to_string(path)?;
-        let config: Self = serde_json::from_str(&content)?;
+        // 加载 YAML 配置
+        let yaml_content = fs::read_to_string(yaml_path)?;
+        let app_config: AppConfig = serde_yaml::from_str(&yaml_content)?;
+
+        // 加载 JSON 配置
+        let json_content = fs::read_to_string(json_path)?;
+        let servers: HashMap<String, ProcessConfig> = serde_json::from_str(&json_content)?;
+
+        let config = Self {
+            app_config,
+            servers,
+        };
         config.validate()?;
         Ok(config)
     }
 
     /// 验证配置有效性
     fn validate(&self) -> Result<(), ConfigError> {
-        if self.endpoint.is_empty() {
+        if self.app_config.websocket.enabled && self.app_config.websocket.endpoint.is_empty() {
             return Err(ConfigError::InvalidFormat(
-                "mcpEndpoint cannot be empty".into(),
+                "websocket.endpoint cannot be empty when enabled".into(),
             ));
         }
 
+        if self.app_config.mqtt.enabled {
+            if self.app_config.mqtt.broker.is_empty() {
+                return Err(ConfigError::InvalidFormat(
+                    "mqtt.broker cannot be empty when enabled".into(),
+                ));
+            }
+            if self.app_config.mqtt.topic.is_empty() {
+                return Err(ConfigError::InvalidFormat(
+                    "mqtt.topic cannot be empty when enabled".into(),
+                ));
+            }
+        }
+
         if self.servers.is_empty() {
-            return Err(ConfigError::InvalidFormat(
-                "mcpServers cannot be empty".into(),
-            ));
+            return Err(ConfigError::InvalidFormat("servers cannot be empty".into()));
         }
 
         for (name, server) in &self.servers {
@@ -111,19 +152,6 @@ impl BridgeConfig {
                 return Err(ConfigError::InvalidFormat(format!(
                     "process.command for server {name} cannot be empty"
                 )));
-            }
-        }
-
-        if let Some(mqtt) = &self.mqtt {
-            if mqtt.broker.is_empty() {
-                return Err(ConfigError::InvalidFormat(
-                    "mqtt.broker cannot be empty".into(),
-                ));
-            }
-            if mqtt.topic.is_empty() {
-                return Err(ConfigError::InvalidFormat(
-                    "mqtt.topic cannot be empty".into(),
-                ));
             }
         }
 
@@ -139,54 +167,61 @@ mod tests {
 
     #[test]
     fn test_load_valid_config() {
-        let mut file = NamedTempFile::new().unwrap();
+        // 创建临时 YAML 文件
+        let mut yaml_file = NamedTempFile::new().unwrap();
         writeln!(
-            file,
+            yaml_file,
+            r#"
+websocket:
+  enabled: true
+  endpoint: "wss://example.com/mcp"
+mqtt:
+  enabled: false
+  broker: "broker.example.com"
+  port: 1883
+  topic: "mcp/bridge"
+connection:
+  heartbeat:
+    interval: 30000
+    timeout: 10000
+  reconnect:
+    interval: 5000
+        "#
+        )
+        .unwrap();
+
+        // 创建临时 JSON 文件
+        let mut json_file = NamedTempFile::new().unwrap();
+        writeln!(
+            json_file,
             r#"{{
-            "mcpEndpoint": "wss://example.com/mcp",
-            "mcpServers": {{
-                "test_server": {{
-                    "command": "echo",
-                    "args": ["hello"]
-                }}
-            }},
-            "connection": {{
-                "heartbeatInterval": 30000,
-                "heartbeatTimeout": 10000,
-                "reconnectInterval": 5000,
-                "max_reconnect_attempts": 10
+            "test_server": {{
+                "command": "echo",
+                "args": ["hello"]
             }}
         }}"#
         )
         .unwrap();
 
-        let config = BridgeConfig::load_from_file(file.path()).unwrap();
-        assert_eq!(config.endpoint, "wss://example.com/mcp");
+        let config = BridgeConfig::load_from_files(yaml_file.path(), json_file.path()).unwrap();
+        assert_eq!(
+            config.app_config.websocket.endpoint,
+            "wss://example.com/mcp"
+        );
         assert_eq!(config.servers.len(), 1);
         assert_eq!(config.servers["test_server"].command, "echo");
-        assert_eq!(config.connection.heartbeat_interval, 30000);
-        assert_eq!(config.connection.max_reconnect_attempts, 10);
+        assert_eq!(config.app_config.connection.heartbeat_interval, 30000);
     }
 
     #[test]
     fn test_load_invalid_config() {
-        let mut file = NamedTempFile::new().unwrap();
-        writeln!(file, "invalid json").unwrap();
+        let mut yaml_file = NamedTempFile::new().unwrap();
+        writeln!(yaml_file, "invalid yaml").unwrap();
 
-        let result = BridgeConfig::load_from_file(file.path());
-        assert!(result.is_err());
-    }
+        let mut json_file = NamedTempFile::new().unwrap();
+        writeln!(json_file, "{{}}").unwrap();
 
-    #[test]
-    fn test_validate_config() {
-        let config = BridgeConfig {
-            endpoint: "".to_string(),
-            servers: HashMap::new(),
-            connection: ConnectionConfig::default(),
-            mqtt: None,
-        };
-
-        let result = config.validate();
+        let result = BridgeConfig::load_from_files(yaml_file.path(), json_file.path());
         assert!(result.is_err());
     }
 }

@@ -1,7 +1,8 @@
+use super::*;
 use crate::config::{BridgeConfig, ConnectionConfig};
 use crate::process::ManagedProcess;
 use crate::transports::{MqttTransport, Transport, WebSocketTransport};
-use anyhow::Context;
+use anyhow::{Context, anyhow};
 use serde_json::Value;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -9,8 +10,6 @@ use tokio::process::ChildStdin;
 use tokio::sync::mpsc;
 use tokio::time::{Duration, Instant, interval};
 use tracing::{debug, error, info, warn};
-
-use super::*;
 
 pub struct Bridge {
     pub config: BridgeConfig,
@@ -34,21 +33,33 @@ pub struct Bridge {
 
 impl Bridge {
     pub async fn new(config: BridgeConfig) -> anyhow::Result<Self> {
-        let connection_config = Arc::new(config.connection.clone());
+        let connection_config = Arc::new(config.app_config.connection.clone());
         let (message_tx, message_rx) = mpsc::channel(100);
 
         let mut transports: Vec<Box<dyn Transport>> = Vec::new();
 
-        let ws = WebSocketTransport::new(config.endpoint.clone(), message_tx.clone())
+        // 初始化 WebSocket 传输
+        if config.app_config.websocket.enabled {
+            let ws = WebSocketTransport::new(
+                config.app_config.websocket.endpoint.clone(),
+                message_tx.clone(),
+            )
             .await
             .with_context(|| "Failed to initialize WebSocket transport")?;
-        transports.push(Box::new(ws));
+            transports.push(Box::new(ws));
+        }
 
-        if let Some(mqtt_config) = config.mqtt.clone() {
-            let mqtt = MqttTransport::new(mqtt_config, message_tx.clone())
+        // 初始化 MQTT 传输
+        if config.app_config.mqtt.enabled {
+            let mqtt = MqttTransport::new(config.app_config.mqtt.clone(), message_tx.clone())
                 .await
                 .context("Failed to initialize MQTT transport")?;
             transports.push(Box::new(mqtt));
+        }
+
+        // 确保至少有一个传输层启用
+        if transports.is_empty() {
+            return Err(anyhow!("No transports enabled in configuration"));
         }
 
         let now = Instant::now();

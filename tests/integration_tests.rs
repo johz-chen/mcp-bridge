@@ -1,4 +1,6 @@
-use mcp_bridge::config::{BridgeConfig, ConnectionConfig, ProcessConfig};
+use mcp_bridge::config::{
+    AppConfig, BridgeConfig, ConnectionConfig, MqttConfig, ProcessConfig, WebSocketConfig,
+};
 use std::collections::HashMap;
 use tokio::sync::mpsc;
 use tokio::time::{Duration, timeout};
@@ -34,21 +36,36 @@ async fn test_process_start_and_stop() {
 
 #[tokio::test]
 async fn test_config_loading() {
-    let config = BridgeConfig {
-        endpoint: "wss://example.com".to_string(),
-        servers: [(
-            "test_server".to_string(),
-            ProcessConfig {
-                command: "echo".to_string(),
-                args: vec!["hello".to_string()],
-                env: HashMap::new(),
-            },
-        )]
-        .iter()
-        .cloned()
-        .collect(),
+    // 创建 AppConfig 部分
+    let app_config = AppConfig {
+        websocket: WebSocketConfig {
+            enabled: true,
+            endpoint: "wss://example.com".to_string(),
+        },
+        mqtt: MqttConfig {
+            enabled: false,
+            broker: "".to_string(),
+            port: 1883,
+            client_id: "test".to_string(),
+            topic: "".to_string(),
+        },
         connection: ConnectionConfig::default(),
-        mqtt: None,
+    };
+
+    // 创建服务器配置
+    let mut servers = HashMap::new();
+    servers.insert(
+        "test_server".to_string(),
+        ProcessConfig {
+            command: "echo".to_string(),
+            args: vec!["hello".to_string()],
+            env: HashMap::new(),
+        },
+    );
+
+    let config = BridgeConfig {
+        app_config,
+        servers,
     };
 
     assert_eq!(config.servers.len(), 1);
@@ -59,6 +76,7 @@ async fn test_config_loading() {
 struct TestBridge {
     #[allow(dead_code)]
     config: BridgeConfig,
+    // 只需要测试中使用的字段
 }
 
 impl TestBridge {
@@ -75,11 +93,28 @@ impl TestBridge {
 
 #[tokio::test]
 async fn test_tool_name_generation() {
-    let config = BridgeConfig {
-        endpoint: "wss://example.com".to_string(),
-        servers: HashMap::new(),
+    // 创建 AppConfig 部分
+    let app_config = AppConfig {
+        websocket: WebSocketConfig {
+            enabled: true,
+            endpoint: "wss://example.com".to_string(),
+        },
+        mqtt: MqttConfig {
+            enabled: false,
+            broker: "".to_string(),
+            port: 1883,
+            client_id: "test".to_string(),
+            topic: "".to_string(),
+        },
         connection: ConnectionConfig::default(),
-        mqtt: None,
+    };
+
+    // 创建空服务器配置
+    let servers = HashMap::new();
+
+    let config = BridgeConfig {
+        app_config,
+        servers,
     };
 
     // 使用本地定义的 TestBridge
