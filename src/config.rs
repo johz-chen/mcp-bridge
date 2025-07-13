@@ -97,7 +97,7 @@ impl BridgeConfig {
         for (name, server) in &self.servers {
             if server.command.is_empty() {
                 return Err(ConfigError::InvalidFormat(
-                    format!("process.command for server {} cannot be empty", name).into()
+                    format!("process.command for server {} cannot be empty", name) // 移除了 .into()
                 ));
             }
         }

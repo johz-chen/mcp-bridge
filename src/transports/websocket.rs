@@ -15,10 +15,13 @@ use tokio_tungstenite::{
 use tokio::net::TcpStream;
 use tracing::{error, debug, warn};
 
+// 定义类型别名以简化复杂类型
+type WebSocketSink = futures_util::stream::SplitSink<WebSocketStream<MaybeTlsStream<TcpStream>>, WsMessage>;
+
 #[derive(Debug)]
 pub struct WebSocketTransport {
     endpoint: String,
-    writer: Arc<Mutex<Option<futures_util::stream::SplitSink<WebSocketStream<MaybeTlsStream<TcpStream>>, WsMessage>>>>,
+    writer: Arc<Mutex<Option<WebSocketSink>>>,
     tx: mpsc::Sender<Value>,
     is_connected: bool,
 }
