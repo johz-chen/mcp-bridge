@@ -1,10 +1,9 @@
-// src/main.rs
 use anyhow::Result;
-use clap::{Parser, Subcommand};
-use mcp_bridge::bridge::Bridge;
-use mcp_bridge::config::BridgeConfig;
-use std::path::PathBuf;
-use tracing::error;
+use clap::{Parser, Subcommand}; // 添加 clap 导入
+use mcp_bridge::bridge::Bridge; // 添加 Bridge 导入
+use mcp_bridge::config::BridgeConfig; // 添加 BridgeConfig 导入
+use std::path::PathBuf; // 添加 PathBuf 导入
+use tracing::error; // 添加 tracing 宏导入 // 添加 Result 导入
 
 #[derive(Parser)]
 #[command(name = "mcp-bridge")]
@@ -18,9 +17,23 @@ struct Cli {
 enum Commands {
     /// Start the bridge service
     Start {
-        /// Config file path
-        #[arg(short, long, value_name = "FILE")]
+        /// Config file path (YAML)
+        #[arg(
+            short,
+            long,
+            value_name = "YAML_FILE",
+            default_value = "conf/config.yaml"
+        )]
         config: PathBuf,
+
+        /// Tools config file path (JSON)
+        #[arg(
+            short,
+            long,
+            value_name = "JSON_FILE",
+            default_value = "conf/mcp_tools.json"
+        )]
+        tools_config: PathBuf,
     },
 }
 
@@ -32,8 +45,11 @@ async fn main() -> Result<()> {
 
     let cli = Cli::parse();
     match cli.command {
-        Commands::Start { config } => {
-            let cfg = BridgeConfig::load_from_file(config)?;
+        Commands::Start {
+            config,
+            tools_config,
+        } => {
+            let cfg = BridgeConfig::load_from_files(&config, &tools_config)?;
 
             let bridge = match Bridge::new(cfg).await {
                 Ok(bridge) => bridge,
