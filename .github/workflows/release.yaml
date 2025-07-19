@@ -3,6 +3,12 @@ name: Release Build
 on:
   release:
     types: [published]
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: write
 
 jobs:
   build-and-release:
@@ -17,6 +23,7 @@ jobs:
           - os: ubuntu-latest
             target: aarch64-unknown-linux-gnu
             bin_name: mcp-bridge-linux-aarch64
+            use_docker: true  # 添加 Docker 构建标志
           - os: macos-latest
             target: x86_64-apple-darwin
             bin_name: mcp-bridge-macos-x86_64
@@ -31,61 +38,185 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Install Rust toolchain
-        uses: actions-rs/toolchain@v1
-        with:
-          toolchain: stable
-          target: ${{ matrix.target }}
-          override: true
+      - name: Set up Docker for ARM64 builds
+        if: matrix.use_docker == true
+        run: |
+          # 1. 卸载冲突的 containerd
+          sudo apt-get remove -y containerd || true
+          
+          # 2. 安装必要依赖
+          sudo apt-get update
+          sudo apt-get install -y ca-certificates curl
+          
+          # 3. 添加 Docker 官方 GPG 密钥
+          sudo install -m 0755 -d /etc/apt/keyrings
+          curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+          sudo chmod a+r /etc/apt/keyrings/docker.gpg
+          
+          # 4. 添加 Docker 仓库
+          echo \
+            "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu \
+            $(. /etc/os-release && echo "$VERSION_CODENAME") stable" | \
+            sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
+          
+          # 5. 安装 Docker
+          sudo apt-get update
+          sudo apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+          
+          # 6. 测试 Docker
+          sudo docker run --rm hello-world
 
-      # 安装 Linux aarch64 交叉编译依赖
-      - name: Install cross-compilation dependencies (Linux aarch64)
-        if: matrix.target == 'aarch64-unknown-linux-gnu'
+          # ==== 修复部分 ====
+          # 使用 Docker 容器进行交叉编译
+          sudo docker run --rm -v "$PWD":/usr/src/myapp -w /usr/src/myapp rust:latest \
+            sh -c '\
+            apt-get update && \
+            apt-get install -y gcc-aarch64-linux-gnu libssl-dev:arm64 && \
+            export CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc && \
+            export CC_aarch64_unknown_linux_gnu=aarch64-linux-gnu-gcc && \
+            export OPENSSL_DIR=/usr && \
+            export OPENSSL_INCLUDE_DIR=/usr/include && \
+            export OPENSSL_LIB_DIR=/usr/lib/aarch64-linux-gnu && \
+            export PKG_CONFIG_PATH=/usr/lib/aarch64-linux-gnu/pkgconfig && \
+            rustup target add aarch64-unknown-linux-gnu && \
+            cargo build --release --target aarch64-unknown-linux-gnu \
+            '
+          
+          # 7. 验证构建结果
+          ls -lh target/aarch64-unknown-linux-gnu/release/
+
+      # 其他平台的 Rust 安装
+      - name: Install Rust
+        if: matrix.use_docker != true
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          target: ${{ matrix.target }}
+
+      # 仅 Linux x86_64 依赖安装（保持不变）
+      - name: Install Linux x86_64 dependencies
+        if: matrix.os == 'ubuntu-latest' && matrix.target == 'x86_64-unknown-linux-gnu'
         run: |
           sudo apt-get update
-          sudo apt-get install -y gcc-aarch64-linux-gnu
+          sudo apt-get install -y libssl-dev pkg-config
+          # 设置 OpenSSL 环境变量
+          echo "OPENSSL_DIR=/usr" >> $GITHUB_ENV
+          echo "OPENSSL_INCLUDE_DIR=/usr/include" >> $GITHUB_ENV
+          echo "OPENSSL_LIB_DIR=/usr/lib/x86_64-linux-gnu" >> $GITHUB_ENV
 
+      # 仅 macOS 依赖安装（保持不变）
+      - name: Install macOS dependencies
+        if: startsWith(matrix.os, 'macos')
+        run: |
+          brew update
+          brew install openssl
+          # 设置 OpenSSL 环境变量
+          echo "OPENSSL_DIR=$(brew --prefix openssl)" >> $GITHUB_ENV
+
+      # 非 Docker 平台的构建（保持不变）
       - name: Build release binary
+        if: matrix.use_docker != true
         run: cargo build --release --target ${{ matrix.target }}
         env:
-          CARGO_INCREMENTAL: 0
+          OPENSSL_STATIC: 1
+          # 为所有平台设置 OpenSSL 环境变量
+          OPENSSL_DIR: ${{ env.OPENSSL_DIR || '' }}
+          OPENSSL_INCLUDE_DIR: ${{ env.OPENSSL_INCLUDE_DIR || '' }}
+          OPENSSL_LIB_DIR: ${{ env.OPENSSL_LIB_DIR || '' }}
 
-      - name: Rename binary
+      # 为 Windows 平台使用 PowerShell 脚本（保持不变）
+      - name: Prepare release package (Windows)
+        if: matrix.os == 'windows-latest'
+        shell: pwsh
         run: |
-          if [[ "${{ matrix.os }}" == "windows-latest" ]]; then
-            cp target/${{ matrix.target }}/release/mcp-bridge.exe ${{ matrix.bin_name }}
-          else
-            cp target/${{ matrix.target }}/release/mcp-bridge ${{ matrix.bin_name }}
-          fi
+          # 创建平台特定的目录
+          New-Item -ItemType Directory -Path release-package -Force | Out-Null
+
+          # 复制文件 - 使用正确的构建路径
+          $binaryPath = "target/$env:TARGET/release/mcp-bridge.exe"
+          if (-not (Test-Path $binaryPath)) {
+              # 尝试备用路径
+              $binaryPath = "target/release/mcp-bridge.exe"
+          }
+
+          if (-not (Test-Path $binaryPath)) {
+              Write-Error "Binary not found at $binaryPath"
+              Get-ChildItem -Recurse -File -Path target | Where-Object { $_.Name -like "*mcp-bridge*" } | Format-List
+              exit 1
+          }
+
+          Copy-Item $binaryPath "release-package/$env:BIN_NAME"
+          Copy-Item conf/config.yaml release-package/
+          Copy-Item conf/mcp_tools.json release-package/
+          Copy-Item README.md release-package/
+
+          # 创建压缩包
+          tar -czf "$env:BIN_NAME.tar.gz" -C release-package .
+
+          # 清理临时目录
+          Remove-Item -Recurse -Force release-package
+
+          # 验证压缩包内容
+          tar -tvf "$env:BIN_NAME.tar.gz"
+
+        env:
+          TARGET: ${{ matrix.target }}
+          BIN_NAME: ${{ matrix.bin_name }}
+
+      # 为 Linux/macOS 平台使用 bash 脚本（保持不变）
+      - name: Prepare release package (Linux/macOS)
+        if: matrix.os != 'windows-latest'
+        shell: bash
+        run: |
+          # 创建平台特定的目录
+          mkdir -p release-package
+
+          # 复制文件
+          cp "target/$TARGET/release/mcp-bridge" "release-package/$BIN_NAME"
+          cp conf/config.yaml release-package/
+          cp conf/mcp_tools.json release-package/
+          cp README.md release-package/
+
+          # 创建压缩包
+          tar -czf "$BIN_NAME.tar.gz" -C release-package .
+
+          # 清理临时目录
+          rm -rf release-package
+
+          # 验证压缩包内容
+          tar -ztvf "$BIN_NAME.tar.gz"
+
+        env:
+          TARGET: ${{ matrix.target }}
+          BIN_NAME: ${{ matrix.bin_name }}
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.bin_name }}
-          path: ${{ matrix.bin_name }}
+          name: ${{ matrix.bin_name }}.tar.gz
+          path: ${{ matrix.bin_name }}.tar.gz
 
   create-release:
+    if: ${{ github.event_name == 'release' }}
     runs-on: ubuntu-latest
     needs: build-and-release
     steps:
-      - name: Download all artifacts
+      - name: Download artifacts
         uses: actions/download-artifact@v4
         with:
           path: artifacts
 
-      - name: Create Release Assets
+      - name: Prepare release assets
         run: |
-          cd artifacts
-          for f in *; do
-            echo "Processing $f"
-            mv "$f" "../${f}"
-          done
-          cd ..
+          # 移动所有压缩包到根目录
+          find artifacts -name '*.tar.gz' -exec mv {} . \;
+          
+          # 列出所有准备上传的文件
+          ls -lh *.tar.gz
 
       - name: Upload to Release
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            mcp-bridge-*
+            mcp-bridge-*.tar.gz
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
