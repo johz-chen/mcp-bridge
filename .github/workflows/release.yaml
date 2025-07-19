@@ -17,10 +17,11 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: ubuntu-latest
+          # 使用 Ubuntu 22.04 替代 24.04 解决 ARM64 软件源问题
+          - os: ubuntu-22.04
             target: x86_64-unknown-linux-gnu
             bin_name: mcp-bridge-linux-x86_64
-          - os: ubuntu-latest
+          - os: ubuntu-22.04
             target: aarch64-unknown-linux-gnu
             bin_name: mcp-bridge-linux-aarch64
           - os: macos-latest
@@ -44,34 +45,46 @@ jobs:
 
       # 平台特定的依赖安装
       - name: Install Linux x86_64 dependencies
-        if: matrix.os == 'ubuntu-latest' && matrix.target == 'x86_64-unknown-linux-gnu'
+        if: matrix.os == 'ubuntu-22.04' && matrix.target == 'x86_64-unknown-linux-gnu'
         run: |
           sudo apt-get update
           sudo apt-get install -y libssl-dev pkg-config
+          # 设置 OpenSSL 环境变量
+          echo "OPENSSL_DIR=/usr" >> $GITHUB_ENV
+          echo "OPENSSL_INCLUDE_DIR=/usr/include" >> $GITHUB_ENV
+          echo "OPENSSL_LIB_DIR=/usr/lib/x86_64-linux-gnu" >> $GITHUB_ENV
 
       - name: Install Linux ARM64 dependencies
-        if: matrix.os == 'ubuntu-latest' && matrix.target == 'aarch64-unknown-linux-gnu'
+        if: matrix.os == 'ubuntu-22.04' && matrix.target == 'aarch64-unknown-linux-gnu'
         run: |
           sudo apt-get update
           sudo apt-get install -y gcc-aarch64-linux-gnu
           sudo dpkg --add-architecture arm64
           sudo apt-get update
           sudo apt-get install -y libssl-dev:arm64
+          # 设置交叉编译环境变量
           echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc" >> $GITHUB_ENV
           echo "CC_aarch64_unknown_linux_gnu=aarch64-linux-gnu-gcc" >> $GITHUB_ENV
           echo "OPENSSL_DIR=/usr" >> $GITHUB_ENV
+          echo "OPENSSL_INCLUDE_DIR=/usr/include/aarch64-linux-gnu" >> $GITHUB_ENV
+          echo "OPENSSL_LIB_DIR=/usr/lib/aarch64-linux-gnu" >> $GITHUB_ENV
 
       - name: Install macOS dependencies
         if: startsWith(matrix.os, 'macos')
         run: |
           brew update
           brew install openssl
+          # 设置 OpenSSL 环境变量
+          echo "OPENSSL_DIR=$(brew --prefix openssl)" >> $GITHUB_ENV
 
       - name: Build release binary
         run: cargo build --release --target ${{ matrix.target }}
         env:
-          OPENSSL_DIR: ${{ (matrix.os == 'macos-latest' && '/usr/local/opt/openssl') || '' }}
           OPENSSL_STATIC: 1
+          # 为所有平台设置 OpenSSL 环境变量
+          OPENSSL_DIR: ${{ env.OPENSSL_DIR || '' }}
+          OPENSSL_INCLUDE_DIR: ${{ env.OPENSSL_INCLUDE_DIR || '' }}
+          OPENSSL_LIB_DIR: ${{ env.OPENSSL_LIB_DIR || '' }}
 
       # 为 Windows 平台使用 PowerShell 脚本
       - name: Prepare release package (Windows)
@@ -80,18 +93,37 @@ jobs:
         run: |
           # 创建平台特定的目录
           New-Item -ItemType Directory -Path release-package -Force | Out-Null
-          
-          # 复制文件
-          Copy-Item "target/$env:TARGET/release/mcp-bridge.exe" "release-package/$env:BIN_NAME"
+
+          # 复制文件 - 使用正确的构建路径
+          $binaryPath = "target/$env:TARGET/release/mcp-bridge.exe"
+          if (-not (Test-Path $binaryPath)) {
+              # 尝试备用路径
+              $binaryPath = "target/release/mcp-bridge.exe"
+          }
+
+          if (-not (Test-Path $binaryPath)) {
+              Write-Error "Binary not found at $binaryPath"
+              Get-ChildItem -Recurse -File -Path target | Where-Object { $_.Name -like "*mcp-bridge*" } | Format-List
+              exit 1
+          }
+
+          Copy-Item $binaryPath "release-package/$env:BIN_NAME"
           Copy-Item conf/config.yaml release-package/
           Copy-Item conf/mcp_tools.json release-package/
           Copy-Item README.md release-package/
-          
+
           # 创建压缩包
           tar -czf "$env:BIN_NAME.tar.gz" -C release-package .
-          
+
           # 清理临时目录
           Remove-Item -Recurse -Force release-package
+
+          # 验证压缩包内容
+          tar -tvf "$env:BIN_NAME.tar.gz"
+
+        env:
+          TARGET: ${{ matrix.target }}
+          BIN_NAME: ${{ matrix.bin_name }}
 
       # 为 Linux/macOS 平台使用 bash 脚本
       - name: Prepare release package (Linux/macOS)
@@ -100,18 +132,21 @@ jobs:
         run: |
           # 创建平台特定的目录
           mkdir -p release-package
-          
+
           # 复制文件
           cp "target/$TARGET/release/mcp-bridge" "release-package/$BIN_NAME"
           cp conf/config.yaml release-package/
           cp conf/mcp_tools.json release-package/
           cp README.md release-package/
-          
+
           # 创建压缩包
           tar -czf "$BIN_NAME.tar.gz" -C release-package .
-          
+
           # 清理临时目录
           rm -rf release-package
+
+          # 验证压缩包内容
+          tar -ztvf "$BIN_NAME.tar.gz"
 
         env:
           TARGET: ${{ matrix.target }}
