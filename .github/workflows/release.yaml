@@ -69,11 +69,29 @@ jobs:
       - name: Build with Cross (ARM64)
         if: matrix.use_docker == true
         run: |
-          # 安装 cross 工具
+          # 1. 安装 cross 工具
           cargo install cross --git https://github.com/cross-rs/cross
           
-          # 使用 cross 构建 ARM64 目标
+          # 2. 创建交叉编译配置文件
+          mkdir -p .cargo
+          cat <<EOF > .cargo/config.toml
+          [target.aarch64-unknown-linux-gnu]
+          linker = "aarch64-linux-gnu-gcc"
+          rustflags = ["-C", "link-arg=-Wl,-rpath,/usr/lib/aarch64-linux-gnu"]
+          
+          [env]
+          OPENSSL_DIR = "/usr"
+          OPENSSL_INCLUDE_DIR = "/usr/include"
+          OPENSSL_LIB_DIR = "/usr/lib/aarch64-linux-gnu"
+          PKG_CONFIG_ALLOW_CROSS = "1"
+          PKG_CONFIG_PATH = "/usr/lib/aarch64-linux-gnu/pkgconfig"
+          EOF
+          
+          # 3. 使用 cross 构建 ARM64 目标
           cross build --release --target aarch64-unknown-linux-gnu
+          
+          # 4. 验证构建结果
+          ls -lh target/aarch64-unknown-linux-gnu/release/
 
       # 其他平台的 Rust 安装
       - name: Install Rust
