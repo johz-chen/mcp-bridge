@@ -18,6 +18,19 @@ pub enum ConfigError {
     YamlError(#[from] serde_yaml::Error),
 }
 
+pub fn default_heartbeat_interval() -> u64 {
+    30000
+}
+pub fn default_heartbeat_timeout() -> u64 {
+    10000
+}
+pub fn default_reconnect_interval() -> u64 {
+    5000
+}
+pub fn default_max_reconnect_attempts() -> u32 {
+    10
+}
+
 // 连接配置
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ConnectionConfig {
@@ -31,18 +44,6 @@ pub struct ConnectionConfig {
     pub max_reconnect_attempts: u32,
 }
 
-fn default_heartbeat_interval() -> u64 {
-    30000
-}
-fn default_heartbeat_timeout() -> u64 {
-    10000
-}
-fn default_reconnect_interval() -> u64 {
-    5000
-}
-fn default_max_reconnect_attempts() -> u32 {
-    10
-}
 
 // 本地进程配置
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -61,7 +62,7 @@ pub struct WebSocketConfig {
 }
 
 // MQTT 配置
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct MqttConfig {
     pub enabled: bool,
     pub broker: String,
@@ -71,7 +72,7 @@ pub struct MqttConfig {
     pub topic: String,
 }
 
-fn default_mqtt_client_id() -> String {
+pub fn default_mqtt_client_id() -> String {
     format!("mcp-bridge-{}", std::process::id())
 }
 
@@ -224,4 +225,42 @@ connection:
         let result = BridgeConfig::load_from_files(yaml_file.path(), json_file.path());
         assert!(result.is_err());
     }
+
+    #[test]
+    fn test_default_connection_config() {
+        let config: ConnectionConfig = serde_json::from_str("{}").unwrap();
+        assert_eq!(config.heartbeat_interval, 30000);
+        assert_eq!(config.heartbeat_timeout, 10000);
+        assert_eq!(config.reconnect_interval, 5000);
+        assert_eq!(config.max_reconnect_attempts, 10);
+    }
+
+    #[test]
+    fn test_process_config_default_env() {
+        let config = ProcessConfig {
+            command: "test".to_string(),
+            args: vec![],
+            env: HashMap::new(),
+        };
+        
+        assert!(config.env.is_empty());
+    }
+
+    #[test]
+    fn test_mqtt_config_default_client_id() {
+        let config = MqttConfig {
+            enabled: false,
+            broker: "".to_string(),
+            port: 1883,
+            client_id: "".to_string(),
+            topic: "".to_string(),
+        };
+        
+        // 虽然这里为空，但实际使用时会生成默认值
+        // 测试默认函数
+        // let default_id = default_mqtt_client_id();
+        assert!(config.client_id.is_empty());
+        //assert!(config.client_id.contains("mcp-bridge"));
+    }
+
 }

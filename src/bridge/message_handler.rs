@@ -176,3 +176,205 @@ async fn handle_tool_call(bridge: &mut Bridge, msg: Value) -> Result<()> {
 
     Ok(())
 }
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::bridge::core::Bridge;
+    use crate::config::{AppConfig, WebSocketConfig, MqttConfig, ConnectionConfig, ProcessConfig, BridgeConfig};
+    use std::collections::{HashMap, HashSet};
+    use serde_json::json;
+    use tokio::sync::mpsc;
+    use anyhow::Result;
+    use std::time::Duration;
+    use std::sync::Arc;
+    use tokio::process::Command;
+
+    // 创建测试桥接器
+    fn create_test_bridge() -> Bridge {
+        Bridge {
+            config: BridgeConfig {
+                app_config: AppConfig {
+                    websocket: WebSocketConfig {
+                        enabled: true,
+                        endpoint: "wss://test.com".to_string(),
+                    },
+                    mqtt: MqttConfig {
+                        enabled: false,
+                        broker: "".to_string(),
+                        port: 1883,
+                        client_id: "test".to_string(),
+                        topic: "".to_string(),
+                    },
+                    connection: ConnectionConfig::default(),
+                },
+                servers: HashMap::new(),
+            },
+            transports: vec![],
+            processes_stdin: HashMap::new(),
+            message_tx: mpsc::channel(100).0,
+            message_rx: mpsc::channel(100).1,
+            connection_config: Arc::new(ConnectionConfig::default()),
+            is_connected: true,
+            reconnect_attempt: 0,
+            initialized: false,
+            tools: HashMap::new(),
+            tool_service_map: HashMap::new(),
+            last_activity: Instant::now(),
+            last_ping_sent: Instant::now(),
+            pending_tools_list_request: None,
+            tools_collected: false,
+            collected_servers: HashSet::new(),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_handle_ping_request() -> Result<()> {
+        let mut bridge = create_test_bridge();
+        let ping_msg = json!({
+            "jsonrpc": "2.0",
+            "id": "ping-123",
+            "method": "ping"
+        });
+        
+        handle_message(&mut bridge, ping_msg).await?;
+        
+        // 验证最后活动时间已更新
+        assert!(bridge.last_activity.elapsed() < Duration::from_millis(10));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_handle_initialize() -> Result<()> {
+        let mut bridge = create_test_bridge();
+        let init_msg = json!({
+            "jsonrpc": "2.0",
+            "id": "init-123",
+            "method": "initialize"
+        });
+        
+        handle_message(&mut bridge, init_msg).await?;
+        
+        // 验证桥接器已初始化
+        assert!(bridge.initialized);
+        // 验证工具列表已清空
+        assert!(bridge.tools.is_empty());
+        assert!(bridge.tool_service_map.is_empty());
+        assert!(bridge.collected_servers.is_empty());
+        assert!(!bridge.tools_collected);
+        
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_handle_tools_list_request() -> Result<()> {
+        let mut bridge = create_test_bridge();
+        let tools_list_msg = json!({
+            "jsonrpc": "2.0",
+            "id": "tools-list-123",
+            "method": "tools/list"
+        });
+        
+        // 第一次请求 - 工具尚未收集
+        handle_message(&mut bridge, tools_list_msg.clone()).await?;
+        assert!(bridge.pending_tools_list_request.is_some());
+        
+        // 标记工具已收集
+        bridge.tools_collected = true;
+        // 第二次请求 - 应该立即回复
+        handle_message(&mut bridge, tools_list_msg).await?;
+        assert!(bridge.pending_tools_list_request.is_none());
+        
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_reply_tools_list() -> Result<()> {
+        let mut bridge = create_test_bridge();
+        
+        // 添加测试工具
+        bridge.tools.insert(
+            "test_tool".to_string(),
+            ("test_server".to_string(), json!({"name": "test_tool"}))
+        );
+        
+        // 设置待处理的工具列表请求
+        bridge.pending_tools_list_request = Some(json!({
+            "jsonrpc": "2.0",
+            "id": "tools-list-123",
+            "method": "tools/list"
+        }));
+        
+        reply_tools_list(&mut bridge).await?;
+        
+        // 验证请求已被处理
+        assert!(bridge.pending_tools_list_request.is_none());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_handle_tool_call_found() -> Result<()> {
+        let mut bridge = create_test_bridge();
+        
+        // 添加测试工具映射
+        bridge.tool_service_map.insert(
+            "prefixed_tool".to_string(),
+            ("test_server".to_string(), "original_tool".to_string())
+        );
+        
+        // 创建真实的子进程标准输入
+        let mut dummy_process = Command::new("echo")
+            .arg("hello")
+            .stdin(std::process::Stdio::piped())
+            .spawn()?;
+        let stdin = dummy_process.stdin.take().unwrap();
+        bridge.processes_stdin.insert("test_server".to_string(), stdin);
+        
+        let tool_call_msg = json!({
+            "jsonrpc": "2.0",
+            "id": "call-123",
+            "method": "tools/call",
+            "params": {
+                "name": "prefixed_tool",
+                "arguments": {"param": "value"}
+            }
+        });
+        
+        handle_message(&mut bridge, tool_call_msg).await?;
+        
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_handle_tool_call_not_found() -> Result<()> {
+        let mut bridge = create_test_bridge();
+        
+        let tool_call_msg = json!({
+            "jsonrpc": "2.0",
+            "id": "call-123",
+            "method": "tools/call",
+            "params": {
+                "name": "unknown_tool",
+                "arguments": {}
+            }
+        });
+        
+        handle_message(&mut bridge, tool_call_msg).await?;
+        
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_handle_unknown_message() -> Result<()> {
+        let mut bridge = create_test_bridge();
+        let unknown_msg = json!({
+            "jsonrpc": "2.0",
+            "method": "unknown.method"
+        });
+        
+        handle_message(&mut bridge, unknown_msg).await?;
+        
+        Ok(())
+    }
+}
