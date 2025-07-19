@@ -1,13 +1,13 @@
+use anyhow::Result;
 use mcp_bridge::config::{
-    AppConfig, BridgeConfig, ConnectionConfig, ConfigError, MqttConfig, ProcessConfig, WebSocketConfig,
+    AppConfig, BridgeConfig, ConfigError, ConnectionConfig, MqttConfig, ProcessConfig,
+    WebSocketConfig,
 };
 use std::collections::HashMap;
+use std::io::Write;
+use tempfile::NamedTempFile;
 use tokio::sync::mpsc;
 use tokio::time::{Duration, timeout};
-use tempfile::NamedTempFile;
-use std::io::Write;
-use anyhow::Result;
-
 
 #[tokio::test]
 async fn test_process_start_and_stop() {
@@ -144,7 +144,7 @@ async fn test_config_validation() {
         },
         connection: ConnectionConfig::default(),
     };
-    
+
     let mut valid_servers = HashMap::new();
     valid_servers.insert(
         "test_server".to_string(),
@@ -154,12 +154,12 @@ async fn test_config_validation() {
             env: HashMap::new(),
         },
     );
-    
+
     let valid_config = BridgeConfig {
         app_config: valid_app_config,
         servers: valid_servers,
     };
-    
+
     assert!(valid_config.validate().is_ok());
 
     // 测试无效的配置 - 空服务器命令
@@ -177,7 +177,7 @@ async fn test_config_validation() {
         },
         connection: ConnectionConfig::default(),
     };
-    
+
     let mut invalid_servers = HashMap::new();
     invalid_servers.insert(
         "invalid_server".to_string(),
@@ -187,12 +187,12 @@ async fn test_config_validation() {
             env: HashMap::new(),
         },
     );
-    
+
     let invalid_config = BridgeConfig {
         app_config: invalid_app_config,
         servers: invalid_servers,
     };
-    
+
     assert!(invalid_config.validate().is_err());
 
     // 测试启用的 WebSocket 但缺少端点
@@ -210,20 +210,28 @@ async fn test_config_validation() {
         },
         connection: ConnectionConfig::default(),
     };
-    
-    assert!(BridgeConfig {
-        app_config: ws_invalid_config,
-        servers: HashMap::new(),
-    }.validate().is_err());
+
+    assert!(
+        BridgeConfig {
+            app_config: ws_invalid_config,
+            servers: HashMap::new(),
+        }
+        .validate()
+        .is_err()
+    );
 }
 
 #[tokio::test]
 async fn test_process_with_environment_variables() {
     let mut env = HashMap::new();
     env.insert("TEST_VAR".to_string(), "test_value".to_string());
-    
+
     let config = ProcessConfig {
-        command: if cfg!(windows) { "cmd".to_string() } else { "sh".to_string() },
+        command: if cfg!(windows) {
+            "cmd".to_string()
+        } else {
+            "sh".to_string()
+        },
         args: if cfg!(windows) {
             vec!["/C".to_string(), "echo %TEST_VAR%".to_string()]
         } else {
@@ -255,9 +263,17 @@ async fn test_process_with_environment_variables() {
 async fn test_process_with_arguments() {
     // 创建带有参数的进程配置
     let config = ProcessConfig {
-        command: if cfg!(windows) { "cmd".to_string() } else { "echo".to_string() },
+        command: if cfg!(windows) {
+            "cmd".to_string()
+        } else {
+            "echo".to_string()
+        },
         args: if cfg!(windows) {
-            vec!["/C".to_string(), "echo".to_string(), "hello world".to_string()]
+            vec![
+                "/C".to_string(),
+                "echo".to_string(),
+                "hello world".to_string(),
+            ]
         } else {
             vec!["hello world".to_string()]
         },
@@ -320,12 +336,15 @@ connection:
     )?;
 
     let config = BridgeConfig::load_from_files(yaml_file.path(), json_file.path())?;
-    
-    assert_eq!(config.app_config.websocket.endpoint, "wss://test-loading.com");
+
+    assert_eq!(
+        config.app_config.websocket.endpoint,
+        "wss://test-loading.com"
+    );
     assert_eq!(config.servers.len(), 1);
     assert_eq!(config.servers["test_server"].command, "echo");
     assert_eq!(config.app_config.connection.heartbeat_interval, 30000);
-    
+
     Ok(())
 }
 
@@ -333,10 +352,10 @@ connection:
 async fn test_config_file_not_found() {
     let yaml_path = "non_existent_config.yaml";
     let json_path = "non_existent_config.json";
-    
+
     let result = BridgeConfig::load_from_files(yaml_path, json_path);
     assert!(result.is_err());
-    
+
     if let Err(e) = result {
         assert!(e.to_string().contains("Config file not found"));
     }
@@ -350,7 +369,7 @@ async fn test_multiple_processes() {
         args: vec!["process one".to_string()],
         env: HashMap::new(),
     };
-    
+
     let config2 = ProcessConfig {
         command: "echo".to_string(),
         args: vec!["process two".to_string()],
@@ -363,13 +382,19 @@ async fn test_multiple_processes() {
 
     let mut process1 = mcp_bridge::process::ManagedProcess::new(&config1).unwrap();
     let mut process2 = mcp_bridge::process::ManagedProcess::new(&config2).unwrap();
-    
-    process1.start(tx.clone(), server_name1.clone()).await.unwrap();
-    process2.start(tx.clone(), server_name2.clone()).await.unwrap();
+
+    process1
+        .start(tx.clone(), server_name1.clone())
+        .await
+        .unwrap();
+    process2
+        .start(tx.clone(), server_name2.clone())
+        .await
+        .unwrap();
 
     // 等待进程输出
     tokio::time::sleep(Duration::from_millis(100)).await;
-    
+
     process1.stop().await.unwrap();
     process2.stop().await.unwrap();
 
@@ -378,11 +403,11 @@ async fn test_multiple_processes() {
     while let Ok(Some(output)) = timeout(Duration::from_secs(1), rx.recv()).await {
         outputs.push(output);
     }
-    
+
     assert_eq!(outputs.len(), 2);
     let server1_output = outputs.iter().find(|(name, _)| name == "server1");
     let server2_output = outputs.iter().find(|(name, _)| name == "server2");
-    
+
     assert!(server1_output.is_some());
     assert!(server2_output.is_some());
     assert!(server1_output.unwrap().1.contains("process one"));
@@ -398,7 +423,7 @@ async fn test_process_stop_before_start() {
     };
 
     let mut process = mcp_bridge::process::ManagedProcess::new(&config).unwrap();
-    
+
     // 尝试在启动前停止
     let result = process.stop().await;
     assert!(result.is_ok());
@@ -416,21 +441,27 @@ async fn test_process_restart() {
     let server_name = "restart_test".to_string();
 
     let mut process = mcp_bridge::process::ManagedProcess::new(&config).unwrap();
-    
+
     // 第一次启动
-    process.start(tx.clone(), server_name.clone()).await.unwrap();
+    process
+        .start(tx.clone(), server_name.clone())
+        .await
+        .unwrap();
     tokio::time::sleep(Duration::from_millis(50)).await;
     process.stop().await.unwrap();
-    
+
     // 检查第一次输出
     let output1 = timeout(Duration::from_secs(1), rx.recv()).await;
     assert!(output1.is_ok());
-    
+
     // 第二次启动
-    process.start(tx.clone(), server_name.clone()).await.unwrap();
+    process
+        .start(tx.clone(), server_name.clone())
+        .await
+        .unwrap();
     tokio::time::sleep(Duration::from_millis(50)).await;
     process.stop().await.unwrap();
-    
+
     // 检查第二次输出
     let output2 = timeout(Duration::from_secs(1), rx.recv()).await;
     assert!(output2.is_ok());

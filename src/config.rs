@@ -44,7 +44,6 @@ pub struct ConnectionConfig {
     pub max_reconnect_attempts: u32,
 }
 
-
 // 本地进程配置
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProcessConfig {
@@ -242,7 +241,7 @@ connection:
             args: vec![],
             env: HashMap::new(),
         };
-        
+
         assert!(config.env.is_empty());
     }
 
@@ -255,12 +254,11 @@ connection:
             client_id: "".to_string(),
             topic: "".to_string(),
         };
-        
+
         // 虽然这里为空，但实际使用时会生成默认值
         // 测试默认函数
         // let default_id = default_mqtt_client_id();
         assert!(config.client_id.is_empty());
         //assert!(config.client_id.contains("mcp-bridge"));
     }
-
 }

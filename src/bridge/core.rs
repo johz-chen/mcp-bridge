@@ -197,15 +197,14 @@ impl Bridge {
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::{AppConfig, WebSocketConfig, MqttConfig, ConnectionConfig};
-    use std::collections::HashMap;
+    use crate::config::{AppConfig, ConnectionConfig, MqttConfig, WebSocketConfig};
     use async_trait::async_trait;
-    use std::any::Any;
     use serde_json::Value;
+    use std::any::Any;
+    use std::collections::HashMap;
 
     // 模拟传输层实现
     #[derive(Debug)]
@@ -243,11 +242,11 @@ mod tests {
         BridgeConfig {
             app_config: AppConfig {
                 websocket: WebSocketConfig {
-                    enabled: false,  // 禁用真实WebSocket
+                    enabled: false, // 禁用真实WebSocket
                     endpoint: "".to_string(),
                 },
                 mqtt: MqttConfig {
-                    enabled: false,  // 禁用真实MQTT
+                    enabled: false, // 禁用真实MQTT
                     broker: "".to_string(),
                     port: 1883,
                     client_id: "".to_string(),
@@ -261,7 +260,10 @@ mod tests {
 
     // 修改 Bridge::new 以允许注入模拟传输层
     impl Bridge {
-        pub async fn new_with_transports(config: BridgeConfig, transports: Vec<Box<dyn Transport>>) -> anyhow::Result<Self> {
+        pub async fn new_with_transports(
+            config: BridgeConfig,
+            transports: Vec<Box<dyn Transport>>,
+        ) -> anyhow::Result<Self> {
             let connection_config = Arc::new(config.app_config.connection.clone());
             let (message_tx, message_rx) = mpsc::channel(100);
 
@@ -305,19 +307,20 @@ mod tests {
         let config = create_test_config();
         let bridge = Bridge::new_with_transports(config, vec![]).await;
         assert!(bridge.is_err());
-        assert_eq!(
-            bridge.err().unwrap().to_string(),
-            "No transports provided"
-        );
+        assert_eq!(bridge.err().unwrap().to_string(), "No transports provided");
     }
 
     #[tokio::test]
     async fn test_broadcast_message() {
         let config = create_test_config();
         let mock_transport = Box::new(MockTransport);
-        let mut bridge = Bridge::new_with_transports(config, vec![mock_transport]).await.unwrap();
-        
-        let result = bridge.broadcast_message(r#"{"test": "message"}"#.to_string()).await;
+        let mut bridge = Bridge::new_with_transports(config, vec![mock_transport])
+            .await
+            .unwrap();
+
+        let result = bridge
+            .broadcast_message(r#"{"test": "message"}"#.to_string())
+            .await;
         assert!(result.is_ok());
     }
 
@@ -325,8 +328,10 @@ mod tests {
     async fn test_broadcast_empty_message() {
         let config = create_test_config();
         let mock_transport = Box::new(MockTransport);
-        let mut bridge = Bridge::new_with_transports(config, vec![mock_transport]).await.unwrap();
-        
+        let mut bridge = Bridge::new_with_transports(config, vec![mock_transport])
+            .await
+            .unwrap();
+
         let result = bridge.broadcast_message("   ".to_string()).await;
         assert!(result.is_ok());
     }
@@ -335,8 +340,10 @@ mod tests {
     async fn test_broadcast_invalid_json() {
         let config = create_test_config();
         let mock_transport = Box::new(MockTransport);
-        let mut bridge = Bridge::new_with_transports(config, vec![mock_transport]).await.unwrap();
-        
+        let mut bridge = Bridge::new_with_transports(config, vec![mock_transport])
+            .await
+            .unwrap();
+
         let result = bridge.broadcast_message("invalid json".to_string()).await;
         assert!(result.is_ok());
     }
@@ -345,8 +352,10 @@ mod tests {
     async fn test_shutdown() {
         let config = create_test_config();
         let mock_transport = Box::new(MockTransport);
-        let mut bridge = Bridge::new_with_transports(config, vec![mock_transport]).await.unwrap();
-        
+        let mut bridge = Bridge::new_with_transports(config, vec![mock_transport])
+            .await
+            .unwrap();
+
         let result = bridge.shutdown().await;
         assert!(result.is_ok());
     }

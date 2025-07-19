@@ -12,12 +12,11 @@ pub fn get_original_tool_name(
     bridge.tool_service_map.get(prefixed_tool_name).cloned()
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::bridge::core::Bridge;
-    use crate::config::{AppConfig, WebSocketConfig, MqttConfig, ConnectionConfig, BridgeConfig};
+    use crate::config::{AppConfig, BridgeConfig, ConnectionConfig, MqttConfig, WebSocketConfig};
     use std::collections::HashMap;
     use std::sync::Arc;
 
@@ -71,11 +70,14 @@ mod tests {
         let mut bridge = create_test_bridge();
         bridge.tool_service_map.insert(
             "prefixed_tool".to_string(),
-            ("server1".to_string(), "original_tool".to_string())
+            ("server1".to_string(), "original_tool".to_string()),
         );
-        
+
         let result = get_original_tool_name(&bridge, "prefixed_tool");
-        assert_eq!(result, Some(("server1".to_string(), "original_tool".to_string())));
+        assert_eq!(
+            result,
+            Some(("server1".to_string(), "original_tool".to_string()))
+        );
     }
 
     #[test]

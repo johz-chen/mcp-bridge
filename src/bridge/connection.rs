@@ -93,27 +93,26 @@ pub async fn handle_transport_disconnect(bridge: &mut Bridge, index: usize) {
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::bridge::core::Bridge;
+    use crate::config::{AppConfig, BridgeConfig, ConnectionConfig, MqttConfig, WebSocketConfig};
     use crate::transports::Transport;
-    use crate::config::{AppConfig, WebSocketConfig, MqttConfig, ConnectionConfig, BridgeConfig};
-    use std::collections::{HashMap, HashSet};
     use async_trait::async_trait;
+    use serde_json::Value;
+    use std::any::Any;
+    use std::collections::{HashMap, HashSet};
+    use std::fmt;
     use std::sync::Arc;
     use tokio::sync::mpsc;
-    use serde_json::Value;
-    use tokio::time::{Instant, Duration};
-    use std::any::Any;
-    use std::fmt;
+    use tokio::time::{Duration, Instant};
 
     // 创建测试桥接器
     fn create_test_bridge() -> Bridge {
         let (message_tx, _) = mpsc::channel(100);
         let (_, message_rx) = mpsc::channel(100);
-        
+
         Bridge {
             config: BridgeConfig {
                 app_config: AppConfig {
@@ -163,13 +162,13 @@ mod tests {
     #[tokio::test]
     async fn test_send_ping() -> anyhow::Result<()> {
         let mut bridge = create_test_bridge();
-        
+
         // 更新最后活动时间，确保满足发送条件
         bridge.last_activity = Instant::now() - Duration::from_millis(40);
         bridge.last_ping_sent = Instant::now() - Duration::from_millis(60);
-        
+
         send_ping(&mut bridge).await?;
-        
+
         // 验证最后发送时间已更新
         assert!(bridge.last_ping_sent.elapsed() < Duration::from_millis(10));
         Ok(())
@@ -178,11 +177,11 @@ mod tests {
     #[tokio::test]
     async fn test_send_ping_not_needed() -> anyhow::Result<()> {
         let mut bridge = create_test_bridge();
-        
+
         // 刚刚活动过，不应发送ping
         let result = send_ping(&mut bridge).await;
         assert!(result.is_ok());
-        
+
         Ok(())
     }
 
@@ -190,15 +189,15 @@ mod tests {
     async fn test_reconnect_success() -> anyhow::Result<()> {
         let mut bridge = create_test_bridge();
         bridge.is_connected = false;
-        
+
         reconnect(&mut bridge).await?;
-        
+
         // 验证重连状态
         assert!(bridge.is_connected);
         assert_eq!(bridge.reconnect_attempt, 0);
         assert!(bridge.last_activity.elapsed() < Duration::from_millis(10));
         assert!(bridge.last_ping_sent.elapsed() < Duration::from_millis(10));
-        
+
         Ok(())
     }
 
@@ -207,7 +206,7 @@ mod tests {
         let mut bridge = create_test_bridge();
         bridge.is_connected = false;
         bridge.reconnect_attempt = 3; // 达到最大尝试次数
-        
+
         let result = reconnect(&mut bridge).await;
         assert!(result.is_err());
         assert_eq!(
@@ -221,12 +220,12 @@ mod tests {
         let mut bridge = create_test_bridge();
         bridge.transports = vec![
             Box::new(MockTransport::new(true)),
-            Box::new(MockTransport::new(true))
+            Box::new(MockTransport::new(true)),
         ];
-        
+
         // 模拟传输层断开
         handle_transport_disconnect(&mut bridge, 0).await;
-        
+
         // 验证重连尝试次数已重置
         assert_eq!(bridge.reconnect_attempt, 0);
     }
@@ -235,42 +234,42 @@ mod tests {
     struct MockTransport {
         connected: bool,
     }
-    
+
     impl MockTransport {
         fn new(connected: bool) -> Self {
             Self { connected }
         }
     }
-    
+
     #[async_trait]
     impl Transport for MockTransport {
         async fn connect(&mut self) -> anyhow::Result<()> {
             self.connected = true;
             Ok(())
         }
-        
+
         async fn disconnect(&mut self) -> anyhow::Result<()> {
             self.connected = false;
             Ok(())
         }
-        
+
         async fn send(&mut self, _msg: Value) -> anyhow::Result<()> {
             Ok(())
         }
-        
+
         fn is_connected(&self) -> bool {
             self.connected
         }
-        
+
         fn as_any(&self) -> &dyn Any {
             self
         }
-        
+
         fn as_any_mut(&mut self) -> &mut dyn Any {
             self
         }
     }
-    
+
     impl fmt::Debug for MockTransport {
         fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
             write!(f, "MockTransport")

@@ -75,18 +75,19 @@ pub async fn handle_process_output(
     Ok(())
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::bridge::core::Bridge;
-    use crate::config::{AppConfig, WebSocketConfig, MqttConfig, ConnectionConfig, BridgeConfig, ProcessConfig};
-    use std::collections::{HashMap, HashSet};
+    use crate::config::{
+        AppConfig, BridgeConfig, ConnectionConfig, MqttConfig, ProcessConfig, WebSocketConfig,
+    };
     use serde_json::json;
+    use std::collections::{HashMap, HashSet};
+    use std::sync::Arc;
+    use std::time::Duration;
     use tokio::sync::mpsc;
     use tokio::time::Instant;
-    use std::time::Duration;
-    use std::sync::Arc;
 
     // 创建测试桥接器
     fn create_test_bridge() -> Bridge {
@@ -130,10 +131,10 @@ mod tests {
     async fn test_handle_normal_output() -> anyhow::Result<()> {
         let mut bridge = create_test_bridge();
         let output = r#"{"jsonrpc": "2.0", "result": "test"}"#.to_string();
-        
+
         let result = handle_process_output(&mut bridge, "test_server", output).await;
         assert!(result.is_ok());
-        
+
         // 验证最后活动时间已更新
         assert!(bridge.last_activity.elapsed() < Duration::from_millis(10));
         Ok(())
@@ -142,7 +143,7 @@ mod tests {
     #[tokio::test]
     async fn test_handle_tools_list_output() -> anyhow::Result<()> {
         let mut bridge = create_test_bridge();
-        
+
         // 创建工具列表响应
         let output = json!({
             "jsonrpc": "2.0",
@@ -153,49 +154,56 @@ mod tests {
                     {"name": "tool2"}
                 ]
             }
-        }).to_string();
-        
+        })
+        .to_string();
+
         let result = handle_process_output(&mut bridge, "test_server", output).await;
         assert!(result.is_ok());
-        
+
         // 验证工具已收集
         assert!(bridge.collected_servers.contains("test_server"));
         assert_eq!(bridge.tools.len(), 2);
         assert!(bridge.tools.contains_key("test_server_xzcli_tool1"));
         assert!(bridge.tools.contains_key("test_server_xzcli_tool2"));
-        
+
         // 验证服务映射
         assert_eq!(
             bridge.tool_service_map.get("test_server_xzcli_tool1"),
             Some(&("test_server".to_string(), "tool1".to_string()))
         );
-        
+
         Ok(())
     }
 
     #[tokio::test]
     async fn test_handle_all_servers_collected() -> anyhow::Result<()> {
         let mut bridge = create_test_bridge();
-        
+
         // 设置服务器配置
-        bridge.config.servers.insert("server1".to_string(), ProcessConfig {
-            command: "echo".to_string(),
-            args: vec![],
-            env: HashMap::new(),
-        });
-        bridge.config.servers.insert("server2".to_string(), ProcessConfig {
-            command: "echo".to_string(),
-            args: vec![],
-            env: HashMap::new(),
-        });
-        
+        bridge.config.servers.insert(
+            "server1".to_string(),
+            ProcessConfig {
+                command: "echo".to_string(),
+                args: vec![],
+                env: HashMap::new(),
+            },
+        );
+        bridge.config.servers.insert(
+            "server2".to_string(),
+            ProcessConfig {
+                command: "echo".to_string(),
+                args: vec![],
+                env: HashMap::new(),
+            },
+        );
+
         // 设置待处理的工具列表请求
         bridge.pending_tools_list_request = Some(json!({
             "jsonrpc": "2.0",
             "id": "tools-list-request",
             "method": "tools/list"
         }));
-        
+
         // 创建第一个服务器的工具列表响应
         let output1 = json!({
             "jsonrpc": "2.0",
@@ -203,13 +211,14 @@ mod tests {
             "result": {
                 "tools": [{"name": "tool1"}]
             }
-        }).to_string();
-        
+        })
+        .to_string();
+
         handle_process_output(&mut bridge, "server1", output1).await?;
-        
+
         // 验证尚未全部收集完成
         assert!(!bridge.tools_collected);
-        
+
         // 创建第二个服务器的工具列表响应
         let output2 = json!({
             "jsonrpc": "2.0",
@@ -217,34 +226,36 @@ mod tests {
             "result": {
                 "tools": [{"name": "tool2"}]
             }
-        }).to_string();
-        
+        })
+        .to_string();
+
         handle_process_output(&mut bridge, "server2", output2).await?;
-        
+
         // 验证全部收集完成
         assert!(bridge.tools_collected);
         assert_eq!(bridge.tools.len(), 2);
-        
+
         Ok(())
     }
 
     #[tokio::test]
     async fn test_handle_invalid_tools_list_output() -> anyhow::Result<()> {
         let mut bridge = create_test_bridge();
-        
+
         // 无效的工具列表响应
         let output = json!({
             "jsonrpc": "2.0",
             "id": "tools-list-test_server",
             "result": "invalid" // 不是数组
-        }).to_string();
-        
+        })
+        .to_string();
+
         let result = handle_process_output(&mut bridge, "test_server", output).await;
         assert!(result.is_ok());
-        
+
         // 验证没有工具被收集
         assert!(bridge.tools.is_empty());
-        
+
         Ok(())
     }
 }

@@ -100,12 +100,11 @@ impl ManagedProcess {
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tokio::sync::mpsc;
     use std::collections::HashMap;
+    use tokio::sync::mpsc;
 
     #[tokio::test]
     async fn test_managed_process_creation() {
@@ -114,7 +113,7 @@ mod tests {
             args: vec!["test".to_string()],
             env: HashMap::new(),
         };
-        
+
         let process = ManagedProcess::new(&config);
         assert!(process.is_ok());
     }
@@ -126,10 +125,10 @@ mod tests {
             args: vec![],
             env: HashMap::new(),
         };
-        
+
         let process = ManagedProcess::new(&config);
         assert!(process.is_ok());
-        
+
         let mut process = process.unwrap();
         let (tx, _) = mpsc::channel(1);
         let result = process.start(tx, "test".to_string()).await;
