@@ -41,15 +41,38 @@ jobs:
           target: ${{ matrix.target }}
           override: true
 
-      # 安装 Linux aarch64 交叉编译依赖
-      - name: Install cross-compilation dependencies (Linux aarch64)
-        if: matrix.target == 'aarch64-unknown-linux-gnu'
+      # 安装平台特定的构建依赖
+      - name: Install build dependencies
         run: |
-          sudo apt-get update
-          sudo apt-get install -y gcc-aarch64-linux-gnu
+          case "${{ matrix.target }}" in
+            x86_64-unknown-linux-gnu)
+              sudo apt-get update
+              sudo apt-get install -y libssl-dev pkg-config
+              ;;
+            aarch64-unknown-linux-gnu)
+              sudo apt-get update
+              sudo apt-get install -y gcc-aarch64-linux-gnu libssl-dev:arm64
+              # 设置交叉编译环境变量
+              echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc" >> $GITHUB_ENV
+              echo "CC_aarch64_unknown_linux_gnu=aarch64-linux-gnu-gcc" >> $GITHUB_ENV
+              echo "OPENSSL_DIR=/usr" >> $GITHUB_ENV
+              ;;
+            *-apple-darwin)
+              # macOS 通常已包含 OpenSSL
+              brew update
+              brew install openssl
+              ;;
+            *-pc-windows-msvc)
+              # Windows 使用预编译的 OpenSSL
+              ;;
+          esac
 
       - name: Build release binary
         run: cargo build --release --target ${{ matrix.target }}
+        env:
+          # 设置 OpenSSL 目录 (macOS 需要)
+          OPENSSL_DIR: ${{ matrix.target == 'x86_64-apple-darwin' || matrix.target == 'aarch64-apple-darwin' && '/usr/local/opt/openssl' || '' }}
+          OPENSSL_STATIC: 1
 
       - name: Prepare release package
         run: |
