@@ -70,12 +70,11 @@ jobs:
       - name: Build with Docker (ARM64)
         if: matrix.use_docker == true
         run: |
-          # 使用 Debian-based 镜像构建
           sudo docker run --rm -v "$PWD":/root/src -w /root/src ubuntu:22.04 \
             sh -c "apt-get update && \
                    apt-get install -y curl build-essential pkg-config libssl-dev && \
                    curl https://sh.rustup.rs -sSf | sh -s -- -y && \
-                   source /root/.cargo/env && \
+                   . /root/.cargo/env && \
                    rustup target add aarch64-unknown-linux-gnu && \
                    export OPENSSL_DIR=/usr && \
                    export OPENSSL_INCLUDE_DIR=/usr/include && \
