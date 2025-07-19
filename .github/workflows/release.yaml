@@ -17,13 +17,13 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # 使用 Ubuntu 22.04 替代 24.04 解决 ARM64 软件源问题
-          - os: ubuntu-22.04
+          - os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
             bin_name: mcp-bridge-linux-x86_64
-          - os: ubuntu-22.04
+          - os: ubuntu-latest
             target: aarch64-unknown-linux-gnu
             bin_name: mcp-bridge-linux-aarch64
+            use_docker: true  # 添加 Docker 构建标志
           - os: macos-latest
             target: x86_64-apple-darwin
             bin_name: mcp-bridge-macos-x86_64
@@ -38,14 +38,35 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      # 仅 ARM64 Linux 使用 Docker 构建
+      - name: Set up Docker for ARM64 builds
+        if: matrix.use_docker == true
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y docker.io
+          sudo systemctl start docker
+          docker run --rm hello-world
+          
+      - name: Build with Docker (ARM64)
+        if: matrix.use_docker == true
+        run: |
+          docker run --rm -v "$PWD":/home/rust/src messense/rust-musl-cross:aarch64-musl \
+            cargo build --release --target aarch64-unknown-linux-gnu
+          
+          # 确保构建结果在标准位置
+          mkdir -p target/aarch64-unknown-linux-gnu/release
+          cp target/aarch64-unknown-linux-gnu/release/mcp-bridge target/aarch64-unknown-linux-gnu/release/
+
+      # 其他平台的 Rust 安装
       - name: Install Rust
+        if: matrix.use_docker != true
         uses: dtolnay/rust-toolchain@stable
         with:
           target: ${{ matrix.target }}
 
-      # 平台特定的依赖安装
+      # 仅 Linux x86_64 依赖安装（保持不变）
       - name: Install Linux x86_64 dependencies
-        if: matrix.os == 'ubuntu-22.04' && matrix.target == 'x86_64-unknown-linux-gnu'
+        if: matrix.os == 'ubuntu-latest' && matrix.target == 'x86_64-unknown-linux-gnu'
         run: |
           sudo apt-get update
           sudo apt-get install -y libssl-dev pkg-config
@@ -54,21 +75,9 @@ jobs:
           echo "OPENSSL_INCLUDE_DIR=/usr/include" >> $GITHUB_ENV
           echo "OPENSSL_LIB_DIR=/usr/lib/x86_64-linux-gnu" >> $GITHUB_ENV
 
-      - name: Install Linux ARM64 dependencies
-        if: matrix.os == 'ubuntu-22.04' && matrix.target == 'aarch64-unknown-linux-gnu'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y gcc-aarch64-linux-gnu
-          sudo dpkg --add-architecture arm64
-          sudo apt-get update
-          sudo apt-get install -y libssl-dev:arm64
-          # 设置交叉编译环境变量
-          echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc" >> $GITHUB_ENV
-          echo "CC_aarch64_unknown_linux_gnu=aarch64-linux-gnu-gcc" >> $GITHUB_ENV
-          echo "OPENSSL_DIR=/usr" >> $GITHUB_ENV
-          echo "OPENSSL_INCLUDE_DIR=/usr/include/aarch64-linux-gnu" >> $GITHUB_ENV
-          echo "OPENSSL_LIB_DIR=/usr/lib/aarch64-linux-gnu" >> $GITHUB_ENV
+      # 删除 ARM64 的 apt 安装步骤（因为使用 Docker 构建）
 
+      # 仅 macOS 依赖安装（保持不变）
       - name: Install macOS dependencies
         if: startsWith(matrix.os, 'macos')
         run: |
@@ -77,7 +86,9 @@ jobs:
           # 设置 OpenSSL 环境变量
           echo "OPENSSL_DIR=$(brew --prefix openssl)" >> $GITHUB_ENV
 
+      # 非 Docker 平台的构建（保持不变）
       - name: Build release binary
+        if: matrix.use_docker != true
         run: cargo build --release --target ${{ matrix.target }}
         env:
           OPENSSL_STATIC: 1
@@ -86,7 +97,7 @@ jobs:
           OPENSSL_INCLUDE_DIR: ${{ env.OPENSSL_INCLUDE_DIR || '' }}
           OPENSSL_LIB_DIR: ${{ env.OPENSSL_LIB_DIR || '' }}
 
-      # 为 Windows 平台使用 PowerShell 脚本
+      # 为 Windows 平台使用 PowerShell 脚本（保持不变）
       - name: Prepare release package (Windows)
         if: matrix.os == 'windows-latest'
         shell: pwsh
@@ -125,7 +136,7 @@ jobs:
           TARGET: ${{ matrix.target }}
           BIN_NAME: ${{ matrix.bin_name }}
 
-      # 为 Linux/macOS 平台使用 bash 脚本
+      # 为 Linux/macOS 平台使用 bash 脚本（保持不变）
       - name: Prepare release package (Linux/macOS)
         if: matrix.os != 'windows-latest'
         shell: bash
