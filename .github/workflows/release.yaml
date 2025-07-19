@@ -41,64 +41,65 @@ jobs:
           target: ${{ matrix.target }}
           override: true
 
-      # 安装平台特定的构建依赖
-      - name: Install build dependencies
+      # 平台特定的依赖安装（分开处理避免语法问题）
+      - name: Install Linux x86_64 dependencies
+        if: matrix.os == 'ubuntu-latest' && matrix.target == 'x86_64-unknown-linux-gnu'
         run: |
-          case "${{ matrix.target }}" in
-            x86_64-unknown-linux-gnu)
-              sudo apt-get update
-              sudo apt-get install -y libssl-dev pkg-config
-              ;;
-            aarch64-unknown-linux-gnu)
-              sudo apt-get update
-              sudo apt-get install -y gcc-aarch64-linux-gnu libssl-dev:arm64
-              # 设置交叉编译环境变量
-              echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc" >> $GITHUB_ENV
-              echo "CC_aarch64_unknown_linux_gnu=aarch64-linux-gnu-gcc" >> $GITHUB_ENV
-              echo "OPENSSL_DIR=/usr" >> $GITHUB_ENV
-              ;;
-            *-apple-darwin)
-              # macOS 通常已包含 OpenSSL
-              brew update
-              brew install openssl
-              ;;
-            *-pc-windows-msvc)
-              # Windows 使用预编译的 OpenSSL
-              ;;
-          esac
+          sudo apt-get update
+          sudo apt-get install -y libssl-dev pkg-config
+
+      - name: Install Linux ARM64 dependencies
+        if: matrix.os == 'ubuntu-latest' && matrix.target == 'aarch64-unknown-linux-gnu'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-aarch64-linux-gnu
+          # 安装多架构支持
+          sudo dpkg --add-architecture arm64
+          sudo apt-get update
+          sudo apt-get install -y libssl-dev:arm64
+          # 设置环境变量
+          echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc" >> $GITHUB_ENV
+          echo "CC_aarch64_unknown_linux_gnu=aarch64-linux-gnu-gcc" >> $GITHUB_ENV
+          echo "OPENSSL_DIR=/usr" >> $GITHUB_ENV
+
+      - name: Install macOS dependencies
+        if: startsWith(matrix.os, 'macos')
+        run: |
+          brew update
+          brew install openssl
 
       - name: Build release binary
         run: cargo build --release --target ${{ matrix.target }}
         env:
-          # 设置 OpenSSL 目录 (macOS 需要)
-          OPENSSL_DIR: ${{ matrix.target == 'x86_64-apple-darwin' || matrix.target == 'aarch64-apple-darwin' && '/usr/local/opt/openssl' || '' }}
+          # 为 macOS 设置 OpenSSL 路径
+          OPENSSL_DIR: ${{ (matrix.os == 'macos-latest' && '/usr/local/opt/openssl') || '' }}
           OPENSSL_STATIC: 1
 
       - name: Prepare release package
+        shell: ${{ (matrix.os == 'windows-latest' && 'pwsh') || 'bash' }}
         run: |
           # 创建平台特定的目录
           mkdir -p release-package
           
-          # 复制二进制文件
+          # 复制文件
           if [ "${{ matrix.os }}" == "windows-latest" ]; then
-            cp target/${{ matrix.target }}/release/mcp-bridge.exe "release-package/${{ matrix.bin_name }}"
+            Copy-Item "target/${{ matrix.target }}/release/mcp-bridge.exe" "release-package/${{ matrix.bin_name }}"
+            Copy-Item conf/config.yaml release-package/
+            Copy-Item conf/mcp_tools.json release-package/
+            Copy-Item README.md release-package/
           else
-            cp target/${{ matrix.target }}/release/mcp-bridge "release-package/${{ matrix.bin_name }}"
+            cp "target/${{ matrix.target }}/release/mcp-bridge" "release-package/${{ matrix.bin_name }}"
+            cp conf/config.yaml release-package/
+            cp conf/mcp_tools.json release-package/
+            cp README.md release-package/
           fi
 
-          # 复制其他文件
-          cp conf/config.yaml release-package/
-          cp conf/mcp_tools.json release-package/
-          cp README.md release-package/
-          
           # 创建压缩包
-          tar -czf ${{ matrix.bin_name }}.tar.gz -C release-package .
-
-          # 清理临时目录
-          rm -rf release-package
-
-          # 验证压缩包内容
-          tar -ztvf ${{ matrix.bin_name }}.tar.gz
+          if [ "${{ matrix.os }}" == "windows-latest" ]; then
+            Compress-Archive -Path release-package/* -DestinationPath ${{ matrix.bin_name }}.tar.gz
+          else
+            tar -czf ${{ matrix.bin_name }}.tar.gz -C release-package .
+          fi
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
