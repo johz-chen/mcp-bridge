@@ -76,7 +76,6 @@ jobs:
           OPENSSL_STATIC: 1
 
       - name: Prepare release package
-        shell: ${{ (matrix.os == 'windows-latest' && 'pwsh') || 'bash' }}
         run: |
           # 创建平台特定的目录
           mkdir -p release-package
