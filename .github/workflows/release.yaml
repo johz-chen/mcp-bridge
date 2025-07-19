@@ -42,20 +42,41 @@ jobs:
       - name: Set up Docker for ARM64 builds
         if: matrix.use_docker == true
         run: |
+          # 卸载冲突的 containerd
+          sudo apt-get remove -y containerd || true
+          
+          # 安装 Docker 依赖
           sudo apt-get update
-          sudo apt-get install -y docker.io
-          sudo systemctl start docker
-          docker run --rm hello-world
+          sudo apt-get install -y ca-certificates curl
+          
+          # 添加 Docker 官方 GPG 密钥
+          sudo install -m 0755 -d /etc/apt/keyrings
+          curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+          sudo chmod a+r /etc/apt/keyrings/docker.gpg
+          
+          # 添加 Docker 仓库
+          echo \
+            "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu \
+            $(. /etc/os-release && echo "$VERSION_CODENAME") stable" | \
+            sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
+          
+          # 安装 Docker
+          sudo apt-get update
+          sudo apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+          
+          # 测试 Docker
+          sudo docker run --rm hello-world
           
       - name: Build with Docker (ARM64)
         if: matrix.use_docker == true
         run: |
-          docker run --rm -v "$PWD":/home/rust/src messense/rust-musl-cross:aarch64-musl \
+          # 使用 Docker 构建
+          sudo docker run --rm -v "$PWD":/home/rust/src messense/rust-musl-cross:aarch64-musl \
             cargo build --release --target aarch64-unknown-linux-gnu
           
           # 确保构建结果在标准位置
           mkdir -p target/aarch64-unknown-linux-gnu/release
-          cp target/aarch64-unknown-linux-gnu/release/mcp-bridge target/aarch64-unknown-linux-gnu/release/
+          cp target/aarch64-unknown-linux-gnu/release/mcp-bridge target/aarch64-unknown-linux-gnu/release/ || true
 
       # 其他平台的 Rust 安装
       - name: Install Rust
@@ -74,8 +95,6 @@ jobs:
           echo "OPENSSL_DIR=/usr" >> $GITHUB_ENV
           echo "OPENSSL_INCLUDE_DIR=/usr/include" >> $GITHUB_ENV
           echo "OPENSSL_LIB_DIR=/usr/lib/x86_64-linux-gnu" >> $GITHUB_ENV
-
-      # 删除 ARM64 的 apt 安装步骤（因为使用 Docker 构建）
 
       # 仅 macOS 依赖安装（保持不变）
       - name: Install macOS dependencies
