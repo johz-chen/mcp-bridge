@@ -196,3 +196,167 @@ impl Bridge {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::{AppConfig, ConnectionConfig, MqttConfig, WebSocketConfig};
+    use async_trait::async_trait;
+    use serde_json::Value;
+    use std::any::Any;
+    use std::collections::HashMap;
+
+    // 模拟传输层实现
+    #[derive(Debug)]
+    struct MockTransport;
+
+    #[async_trait]
+    impl Transport for MockTransport {
+        async fn connect(&mut self) -> anyhow::Result<()> {
+            Ok(())
+        }
+
+        async fn disconnect(&mut self) -> anyhow::Result<()> {
+            Ok(())
+        }
+
+        async fn send(&mut self, _msg: Value) -> anyhow::Result<()> {
+            Ok(())
+        }
+
+        fn is_connected(&self) -> bool {
+            true
+        }
+
+        fn as_any(&self) -> &dyn Any {
+            self
+        }
+
+        fn as_any_mut(&mut self) -> &mut dyn Any {
+            self
+        }
+    }
+
+    // 测试工具函数
+    fn create_test_config() -> BridgeConfig {
+        BridgeConfig {
+            app_config: AppConfig {
+                websocket: WebSocketConfig {
+                    enabled: false, // 禁用真实WebSocket
+                    endpoint: "".to_string(),
+                },
+                mqtt: MqttConfig {
+                    enabled: false, // 禁用真实MQTT
+                    broker: "".to_string(),
+                    port: 1883,
+                    client_id: "".to_string(),
+                    topic: "".to_string(),
+                },
+                connection: ConnectionConfig::default(),
+            },
+            servers: HashMap::new(),
+        }
+    }
+
+    // 修改 Bridge::new 以允许注入模拟传输层
+    impl Bridge {
+        pub async fn new_with_transports(
+            config: BridgeConfig,
+            transports: Vec<Box<dyn Transport>>,
+        ) -> anyhow::Result<Self> {
+            let connection_config = Arc::new(config.app_config.connection.clone());
+            let (message_tx, message_rx) = mpsc::channel(100);
+
+            // 确保至少有一个传输层
+            if transports.is_empty() {
+                return Err(anyhow!("No transports provided"));
+            }
+
+            let now = Instant::now();
+            Ok(Self {
+                config,
+                transports,
+                processes_stdin: HashMap::new(),
+                message_tx,
+                message_rx,
+                connection_config,
+                is_connected: false,
+                reconnect_attempt: 0,
+                initialized: false,
+                tools: HashMap::new(),
+                tool_service_map: HashMap::new(),
+                last_activity: now,
+                last_ping_sent: now,
+                pending_tools_list_request: None,
+                tools_collected: false,
+                collected_servers: HashSet::new(),
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn test_bridge_creation() {
+        let config = create_test_config();
+        let mock_transport = Box::new(MockTransport);
+        let bridge = Bridge::new_with_transports(config, vec![mock_transport]).await;
+        assert!(bridge.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_bridge_without_transports() {
+        let config = create_test_config();
+        let bridge = Bridge::new_with_transports(config, vec![]).await;
+        assert!(bridge.is_err());
+        assert_eq!(bridge.err().unwrap().to_string(), "No transports provided");
+    }
+
+    #[tokio::test]
+    async fn test_broadcast_message() {
+        let config = create_test_config();
+        let mock_transport = Box::new(MockTransport);
+        let mut bridge = Bridge::new_with_transports(config, vec![mock_transport])
+            .await
+            .unwrap();
+
+        let result = bridge
+            .broadcast_message(r#"{"test": "message"}"#.to_string())
+            .await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_broadcast_empty_message() {
+        let config = create_test_config();
+        let mock_transport = Box::new(MockTransport);
+        let mut bridge = Bridge::new_with_transports(config, vec![mock_transport])
+            .await
+            .unwrap();
+
+        let result = bridge.broadcast_message("   ".to_string()).await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_broadcast_invalid_json() {
+        let config = create_test_config();
+        let mock_transport = Box::new(MockTransport);
+        let mut bridge = Bridge::new_with_transports(config, vec![mock_transport])
+            .await
+            .unwrap();
+
+        let result = bridge.broadcast_message("invalid json".to_string()).await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_shutdown() {
+        let config = create_test_config();
+        let mock_transport = Box::new(MockTransport);
+        let mut bridge = Bridge::new_with_transports(config, vec![mock_transport])
+            .await
+            .unwrap();
+
+        let result = bridge.shutdown().await;
+        assert!(result.is_ok());
+    }
+}
