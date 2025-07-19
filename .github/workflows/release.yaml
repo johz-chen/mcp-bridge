@@ -73,32 +73,49 @@ jobs:
           OPENSSL_DIR: ${{ (matrix.os == 'macos-latest' && '/usr/local/opt/openssl') || '' }}
           OPENSSL_STATIC: 1
 
-      # 简化的打包步骤（所有平台统一）
-      - name: Prepare release package
-        shell: ${{ (matrix.os == 'windows-latest' && 'pwsh') || 'bash' }}
+      # 为 Windows 平台使用 PowerShell 脚本
+      - name: Prepare release package (Windows)
+        if: matrix.os == 'windows-latest'
+        shell: pwsh
+        run: |
+          # 创建平台特定的目录
+          New-Item -ItemType Directory -Path release-package -Force | Out-Null
+          
+          # 复制文件
+          Copy-Item "target/$env:TARGET/release/mcp-bridge.exe" "release-package/$env:BIN_NAME"
+          Copy-Item conf/config.yaml release-package/
+          Copy-Item conf/mcp_tools.json release-package/
+          Copy-Item README.md release-package/
+          
+          # 创建压缩包
+          tar -czf "$env:BIN_NAME.tar.gz" -C release-package .
+          
+          # 清理临时目录
+          Remove-Item -Recurse -Force release-package
+
+      # 为 Linux/macOS 平台使用 bash 脚本
+      - name: Prepare release package (Linux/macOS)
+        if: matrix.os != 'windows-latest'
+        shell: bash
         run: |
           # 创建平台特定的目录
           mkdir -p release-package
           
           # 复制文件
-          if [ "${{ matrix.os }}" == "windows-latest" ]; then
-            Copy-Item "target/${{ matrix.target }}/release/mcp-bridge.exe" "release-package/${{ matrix.bin_name }}"
-            Copy-Item conf/config.yaml release-package/
-            Copy-Item conf/mcp_tools.json release-package/
-            Copy-Item README.md release-package/
-          else
-            cp "target/${{ matrix.target }}/release/mcp-bridge" "release-package/${{ matrix.bin_name }}"
-            cp conf/config.yaml release-package/
-            cp conf/mcp_tools.json release-package/
-            cp README.md release-package/
-          fi
-
+          cp "target/$TARGET/release/mcp-bridge" "release-package/$BIN_NAME"
+          cp conf/config.yaml release-package/
+          cp conf/mcp_tools.json release-package/
+          cp README.md release-package/
+          
           # 创建压缩包
-          if [ "${{ matrix.os }}" == "windows-latest" ]; then
-            Compress-Archive -Path release-package/* -DestinationPath ${{ matrix.bin_name }}.tar.gz
-          else
-            tar -czf "${{ matrix.bin_name }}.tar.gz" -C release-package .
-          fi
+          tar -czf "$BIN_NAME.tar.gz" -C release-package .
+          
+          # 清理临时目录
+          rm -rf release-package
+
+        env:
+          TARGET: ${{ matrix.target }}
+          BIN_NAME: ${{ matrix.bin_name }}
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
