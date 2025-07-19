@@ -38,48 +38,42 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # 仅 ARM64 Linux 使用 Docker 构建
       - name: Set up Docker for ARM64 builds
         if: matrix.use_docker == true
         run: |
-          # 卸载冲突的 containerd
+          # 1. 卸载冲突的 containerd
           sudo apt-get remove -y containerd || true
           
-          # 安装 Docker 依赖
+          # 2. 安装必要依赖
           sudo apt-get update
           sudo apt-get install -y ca-certificates curl
           
-          # 添加 Docker 官方 GPG 密钥
+          # 3. 添加 Docker 官方 GPG 密钥
           sudo install -m 0755 -d /etc/apt/keyrings
           curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor -o /etc/apt/keyrings/docker.gpg
           sudo chmod a+r /etc/apt/keyrings/docker.gpg
           
-          # 添加 Docker 仓库
+          # 4. 添加 Docker 仓库
           echo \
             "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu \
             $(. /etc/os-release && echo "$VERSION_CODENAME") stable" | \
             sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
           
-          # 安装 Docker
+          # 5. 安装 Docker
           sudo apt-get update
           sudo apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
           
-          # 测试 Docker
+          # 6. 测试 Docker
           sudo docker run --rm hello-world
-
-      - name: Build with Docker (ARM64)
+          
+      - name: Build with Cross (ARM64)
         if: matrix.use_docker == true
         run: |
-          sudo docker run --rm -v "$PWD":/root/src -w /root/src ubuntu:22.04 \
-            sh -c "apt-get update && \
-                   apt-get install -y curl build-essential pkg-config libssl-dev && \
-                   curl https://sh.rustup.rs -sSf | sh -s -- -y && \
-                   . /root/.cargo/env && \
-                   rustup target add aarch64-unknown-linux-gnu && \
-                   export OPENSSL_DIR=/usr && \
-                   export OPENSSL_INCLUDE_DIR=/usr/include && \
-                   export OPENSSL_LIB_DIR=/usr/lib/aarch64-linux-gnu && \
-                   cargo build --release --target aarch64-unknown-linux-gnu"
+          # 安装 cross 工具
+          cargo install cross --git https://github.com/cross-rs/cross
+          
+          # 使用 cross 构建 ARM64 目标
+          cross build --release --target aarch64-unknown-linux-gnu
 
       # 其他平台的 Rust 安装
       - name: Install Rust
