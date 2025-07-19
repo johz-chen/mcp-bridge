@@ -67,50 +67,22 @@ jobs:
           sudo docker run --rm hello-world
 
           # ==== 修复部分 ====
-          # 启用多架构支持
-          sudo dpkg --add-architecture arm64
-          sudo apt-get update
+          # 使用 Docker 容器进行交叉编译
+          sudo docker run --rm -v "$PWD":/usr/src/myapp -w /usr/src/myapp rust:latest \
+            sh -c '\
+            apt-get update && \
+            apt-get install -y gcc-aarch64-linux-gnu libssl-dev:arm64 && \
+            export CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc && \
+            export CC_aarch64_unknown_linux_gnu=aarch64-linux-gnu-gcc && \
+            export OPENSSL_DIR=/usr && \
+            export OPENSSL_INCLUDE_DIR=/usr/include && \
+            export OPENSSL_LIB_DIR=/usr/lib/aarch64-linux-gnu && \
+            export PKG_CONFIG_PATH=/usr/lib/aarch64-linux-gnu/pkgconfig && \
+            rustup target add aarch64-unknown-linux-gnu && \
+            cargo build --release --target aarch64-unknown-linux-gnu \
+            '
           
-          # 安装 ARM64 交叉编译工具链
-          sudo apt-get install -y \
-              gcc-aarch64-linux-gnu \
-              libssl-dev:arm64 \
-              libssl-dev \
-              pkg-config-arm-linux-gnueabi
-          
-          # 设置环境变量
-          echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc" >> $GITHUB_ENV
-          echo "CC_aarch64_unknown_linux_gnu=aarch64-linux-gnu-gcc" >> $GITHUB_ENV
-          echo "OPENSSL_DIR=/usr" >> $GITHUB_ENV
-          echo "OPENSSL_INCLUDE_DIR=/usr/include" >> $GITHUB_ENV
-          echo "OPENSSL_LIB_DIR=/usr/lib/aarch64-linux-gnu" >> $GITHUB_ENV
-          echo "PKG_CONFIG_PATH=/usr/lib/aarch64-linux-gnu/pkgconfig" >> $GITHUB_ENV
-
-      - name: Build with Cross (ARM64)
-        if: matrix.use_docker == true
-        run: |
-          # 1. 安装 cross 工具
-          cargo install cross --git https://github.com/cross-rs/cross
-          
-          # 2. 创建交叉编译配置文件
-          mkdir -p .cargo
-          cat <<EOF > .cargo/config.toml
-          [target.aarch64-unknown-linux-gnu]
-          linker = "aarch64-linux-gnu-gcc"
-          rustflags = ["-C", "link-arg=-Wl,-rpath,/usr/lib/aarch64-linux-gnu"]
-          
-          [env]
-          OPENSSL_DIR = "/usr"
-          OPENSSL_INCLUDE_DIR = "/usr/include"
-          OPENSSL_LIB_DIR = "/usr/lib/aarch64-linux-gnu"
-          PKG_CONFIG_ALLOW_CROSS = "1"
-          PKG_CONFIG_PATH = "/usr/lib/aarch64-linux-gnu/pkgconfig"
-          EOF
-          
-          # 3. 使用 cross 构建 ARM64 目标
-          cross build --release --target aarch64-unknown-linux-gnu
-          
-          # 4. 验证构建结果
+          # 7. 验证构建结果
           ls -lh target/aarch64-unknown-linux-gnu/release/
 
       # 其他平台的 Rust 安装
