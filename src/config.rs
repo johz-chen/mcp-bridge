@@ -124,7 +124,7 @@ impl BridgeConfig {
     }
 
     /// 验证配置有效性
-    fn validate(&self) -> Result<(), ConfigError> {
+    pub fn validate(&self) -> Result<(), ConfigError> {
         if self.app_config.websocket.enabled && self.app_config.websocket.endpoint.is_empty() {
             return Err(ConfigError::InvalidFormat(
                 "websocket.endpoint cannot be empty when enabled".into(),
