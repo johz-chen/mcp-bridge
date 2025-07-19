@@ -7,6 +7,9 @@ on:
     branches:
       - main
 
+permissions:
+  contents: write
+
 jobs:
   build-and-release:
     runs-on: ${{ matrix.os }}
@@ -34,14 +37,12 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Install Rust toolchain
-        uses: actions-rs/toolchain@v1
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: stable
           target: ${{ matrix.target }}
-          override: true
 
-      # 平台特定的依赖安装（分开处理避免语法问题）
+      # 平台特定的依赖安装
       - name: Install Linux x86_64 dependencies
         if: matrix.os == 'ubuntu-latest' && matrix.target == 'x86_64-unknown-linux-gnu'
         run: |
@@ -53,11 +54,9 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y gcc-aarch64-linux-gnu
-          # 安装多架构支持
           sudo dpkg --add-architecture arm64
           sudo apt-get update
           sudo apt-get install -y libssl-dev:arm64
-          # 设置环境变量
           echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc" >> $GITHUB_ENV
           echo "CC_aarch64_unknown_linux_gnu=aarch64-linux-gnu-gcc" >> $GITHUB_ENV
           echo "OPENSSL_DIR=/usr" >> $GITHUB_ENV
@@ -71,11 +70,12 @@ jobs:
       - name: Build release binary
         run: cargo build --release --target ${{ matrix.target }}
         env:
-          # 为 macOS 设置 OpenSSL 路径
           OPENSSL_DIR: ${{ (matrix.os == 'macos-latest' && '/usr/local/opt/openssl') || '' }}
           OPENSSL_STATIC: 1
 
+      # 简化的打包步骤（所有平台统一）
       - name: Prepare release package
+        shell: ${{ (matrix.os == 'windows-latest' && 'pwsh') || 'bash' }}
         run: |
           # 创建平台特定的目录
           mkdir -p release-package
@@ -97,7 +97,7 @@ jobs:
           if [ "${{ matrix.os }}" == "windows-latest" ]; then
             Compress-Archive -Path release-package/* -DestinationPath ${{ matrix.bin_name }}.tar.gz
           else
-            tar -czf ${{ matrix.bin_name }}.tar.gz -C release-package .
+            tar -czf "${{ matrix.bin_name }}.tar.gz" -C release-package .
           fi
 
       - name: Upload artifact
