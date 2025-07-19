@@ -182,7 +182,7 @@ async fn handle_tool_call(bridge: &mut Bridge, msg: Value) -> Result<()> {
 mod tests {
     use super::*;
     use crate::bridge::core::Bridge;
-    use crate::config::{AppConfig, WebSocketConfig, MqttConfig, ConnectionConfig, ProcessConfig, BridgeConfig};
+    use crate::config::{AppConfig, WebSocketConfig, MqttConfig, ConnectionConfig, BridgeConfig};
     use std::collections::{HashMap, HashSet};
     use serde_json::json;
     use tokio::sync::mpsc;
