@@ -71,7 +71,7 @@ jobs:
           sudo docker run --rm -v "$PWD":/usr/src/myapp -w /usr/src/myapp rust:latest \
             sh -c '\
             apt-get update && \
-            apt-get install -y gcc-aarch64-linux-gnu libssl-dev:arm64 && \
+            apt-get install -y gcc-aarch64-linux-gnu libssl-dev && \
             export CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc && \
             export CC_aarch64_unknown_linux_gnu=aarch64-linux-gnu-gcc && \
             export OPENSSL_DIR=/usr && \
