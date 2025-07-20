@@ -10,7 +10,7 @@ MCP Bridge 是一个实现 MCP（Model Control Protocol）协议的桥接服务�
 
 ## 使用指南
 
-详细的使用说明请[点击查看](https://github.com/johz-chen/mcp-bridge/issues/9)
+详细的使用说明请 [点击查看](https://github.com/johz-chen/mcp-bridge/issues/9)
 
 ### 1. 安装
 
