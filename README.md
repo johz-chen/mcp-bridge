@@ -55,22 +55,37 @@ connection:
 #### `mcp_tools.json` 示例
 ```json
 {
-  "calculator": {
-    "command": "node",
-    "args": ["./example_mcp_tools/calculator.js"]
-  },
-  "datetime": {
-    "command": "node",
-    "args": ["./example_mcp_tools/datetime.js"]
-  },
-  "amap-maps": {
-    "command": "npx",
-    "args": ["-y", "@amap/amap-maps-mcp-server"],
-    "env": {
-      "AMAP_MAPS_API_KEY": "your-key"
+    "exchange-rate": {
+        "command": "npx",
+        "args": [
+            "-y",
+            "@karashiiro/exchange-rate-mcp"
+        ]
+    },
+    "amap-maps": {
+        "command": "npx",
+        "args": [
+            "-y",
+            "@amap/amap-maps-mcp-server"
+        ],
+        "env": {
+            "AMAP_MAPS_API_KEY": "your-key"
+        }
+    },
+    "example-node-tool": {
+        "command": "node",
+        "args": [
+            "/path/to/node-tool.js"
+        ]
+    },
+    "example-python-tool": {
+        "command": "python",
+        "args": [
+            "/path/to/python-tool.py"
+        ]
     }
-  }
 }
+
 ```
 
 ### 3. 启动服务

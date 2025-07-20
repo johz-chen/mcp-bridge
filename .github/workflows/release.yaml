@@ -51,7 +51,7 @@ jobs:
         run: |
           mkdir pkg
           cp target/${{ matrix.target }}/release/mcp-bridge${{ runner.os == 'Windows' && '.exe' || '' }} pkg/mcp-bridge
-          cp -r conf mcp_tools README.md pkg/
+          cp -r conf README.md pkg/
           tar -czf ${{ matrix.pkg }}.tar.gz -C pkg .
 
       - name: Package (Windows)
@@ -61,7 +61,6 @@ jobs:
           mkdir pkg
           Copy-Item "target/${{ matrix.target }}/release/mcp-bridge.exe" "pkg/mcp-bridge.exe"
           Copy-Item "conf" -Recurse -Destination "pkg"
-          Copy-Item "mcp_tools" -Recurse -Destination "pkg"
           Copy-Item "README.md" "pkg"
           tar -czf "${{ matrix.pkg }}.tar.gz" -C pkg .
 
