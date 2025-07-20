@@ -5,15 +5,5 @@
       "-y",
       "@karashiiro/exchange-rate-mcp"
     ]
-  },
-  "amap-maps": {
-    "command": "npx",
-    "args": [
-      "-y",
-      "@amap/amap-maps-mcp-server"
-    ],
-    "env": {
-      "AMAP_MAPS_API_KEY": "your-key"
-    }
   }
 }
