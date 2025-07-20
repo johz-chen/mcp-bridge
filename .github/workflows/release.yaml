@@ -4,197 +4,82 @@ on:
   release:
     types: [published]
   pull_request:
-    branches:
-      - main
+    branches: [main]
 
 permissions:
   contents: write
 
+env:
+  CARGO_TERM_COLOR: always
+
 jobs:
-  build-and-release:
+  build:
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
         include:
-          - os: ubuntu-latest
-            target: x86_64-unknown-linux-gnu
-            bin_name: mcp-bridge-linux-x86_64
-          - os: ubuntu-latest
-            target: aarch64-unknown-linux-gnu
-            bin_name: mcp-bridge-linux-aarch64
-            use_docker: true  # 添加 Docker 构建标志
-          - os: macos-latest
-            target: x86_64-apple-darwin
-            bin_name: mcp-bridge-macos-x86_64
-          - os: macos-latest
-            target: aarch64-apple-darwin
-            bin_name: mcp-bridge-macos-aarch64
-          - os: windows-latest
-            target: x86_64-pc-windows-msvc
-            bin_name: mcp-bridge-windows-x86_64.exe
+          # Linux
+          - { os: ubuntu-latest, target: x86_64-unknown-linux-gnu,   bin: mcp-bridge-linux-x86_64 }
+          - { os: ubuntu-latest, target: aarch64-unknown-linux-gnu,  bin: mcp-bridge-linux-aarch64, use_cross: true }
+          # macOS
+          - { os: macos-latest,  target: x86_64-apple-darwin,        bin: mcp-bridge-macos-x86_64 }
+          - { os: macos-latest,  target: aarch64-apple-darwin,       bin: mcp-bridge-macos-aarch64 }
+          # Windows
+          - { os: windows-latest,target: x86_64-pc-windows-msvc,     bin: mcp-bridge-windows-x86_64.exe }
 
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Set up Docker for ARM64 builds
-        if: matrix.use_docker == true
-        run: |
-          # 1. 卸载冲突的 containerd
-          sudo apt-get remove -y containerd || true
-          
-          # 2. 安装必要依赖
-          sudo apt-get update
-          sudo apt-get install -y ca-certificates curl
-          
-          # 3. 添加 Docker 官方 GPG 密钥
-          sudo install -m 0755 -d /etc/apt/keyrings
-          curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor -o /etc/apt/keyrings/docker.gpg
-          sudo chmod a+r /etc/apt/keyrings/docker.gpg
-          
-          # 4. 添加 Docker 仓库
-          echo \
-            "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu \
-            $(. /etc/os-release && echo "$VERSION_CODENAME") stable" | \
-            sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
-          
-          # 5. 安装 Docker
-          sudo apt-get update
-          sudo apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
-          
-          # 6. 测试 Docker
-          sudo docker run --rm hello-world
-
-          # ==== 修复部分 ====
-          # 使用 Docker 容器进行交叉编译
-          sudo docker run --rm -v "$PWD":/usr/src/myapp -w /usr/src/myapp rust:latest \
-            sh -c '\
-            apt-get update && \
-            apt-get install -y gcc-aarch64-linux-gnu && \
-            export CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc && \
-            export CC_aarch64_unknown_linux_gnu=aarch64-linux-gnu-gcc && \
-            export PKG_CONFIG_PATH=/usr/lib/aarch64-linux-gnu/pkgconfig && \
-            rustup target add aarch64-unknown-linux-gnu && \
-            cargo build --release --target aarch64-unknown-linux-gnu \
-            '
-          
-          # 7. 验证构建结果
-          ls -lh target/aarch64-unknown-linux-gnu/release/
-
-      # 其他平台的 Rust 安装
       - name: Install Rust
-        if: matrix.use_docker != true
         uses: dtolnay/rust-toolchain@stable
         with:
-          target: ${{ matrix.target }}
+          targets: ${{ matrix.target }}
 
-      # 仅 Linux x86_64 依赖安装（保持不变）
-      - name: Install Linux x86_64 dependencies
-        if: matrix.os == 'ubuntu-latest' && matrix.target == 'x86_64-unknown-linux-gnu'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y pkg-config
+      - name: Install cross
+        if: matrix.use_cross
+        run: cargo install cross --git https://github.com/cross-rs/cross
 
-      # 非 Docker 平台的构建（保持不变）
-      - name: Build release binary
-        if: matrix.use_docker != true
+      - name: Build (cross)
+        if: matrix.use_cross
+        run: cross build --release --target ${{ matrix.target }}
+
+      - name: Build (cargo)
+        if: ${{ !matrix.use_cross }}
         run: cargo build --release --target ${{ matrix.target }}
 
-      # 为 Windows 平台使用 PowerShell 脚本（保持不变）
-      - name: Prepare release package (Windows)
-        if: matrix.os == 'windows-latest'
-        shell: pwsh
-        run: |
-          # 创建平台特定的目录
-          New-Item -ItemType Directory -Path release-package -Force | Out-Null
-
-          # 复制文件 - 使用正确的构建路径
-          $binaryPath = "target/$env:TARGET/release/mcp-bridge.exe"
-          if (-not (Test-Path $binaryPath)) {
-              # 尝试备用路径
-              $binaryPath = "target/release/mcp-bridge.exe"
-          }
-
-          if (-not (Test-Path $binaryPath)) {
-              Write-Error "Binary not found at $binaryPath"
-              Get-ChildItem -Recurse -File -Path target | Where-Object { $_.Name -like "*mcp-bridge*" } | Format-List
-              exit 1
-          }
-
-          Copy-Item $binaryPath "release-package/$env:BIN_NAME"
-          Copy-Item conf/config.yaml release-package/
-          Copy-Item conf/mcp_tools.json release-package/
-          Copy-Item README.md release-package/
-
-          # 创建压缩包
-          tar -czf "$env:BIN_NAME.tar.gz" -C release-package .
-
-          # 清理临时目录
-          Remove-Item -Recurse -Force release-package
-
-          # 验证压缩包内容
-          tar -tvf "$env:BIN_NAME.tar.gz"
-
-        env:
-          TARGET: ${{ matrix.target }}
-          BIN_NAME: ${{ matrix.bin_name }}
-
-      # 为 Linux/macOS 平台使用 bash 脚本（保持不变）
-      - name: Prepare release package (Linux/macOS)
-        if: matrix.os != 'windows-latest'
+      - name: Package (*nix)
+        if: runner.os != 'Windows'
         shell: bash
         run: |
-          # 创建平台特定的目录
-          mkdir -p release-package
-
-          # 复制文件
-          cp "target/$TARGET/release/mcp-bridge" "release-package/$BIN_NAME"
-          cp conf/config.yaml release-package/
-          cp conf/mcp_tools.json release-package/
-          cp README.md release-package/
-
-          # 创建压缩包
-          tar -czf "$BIN_NAME.tar.gz" -C release-package .
-
-          # 清理临时目录
-          rm -rf release-package
-
-          # 验证压缩包内容
-          tar -ztvf "$BIN_NAME.tar.gz"
-
-        env:
-          TARGET: ${{ matrix.target }}
-          BIN_NAME: ${{ matrix.bin_name }}
-
-      - name: Upload artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: ${{ matrix.bin_name }}.tar.gz
-          path: ${{ matrix.bin_name }}.tar.gz
-
-  create-release:
-    if: ${{ github.event_name == 'release' }}
-    runs-on: ubuntu-latest
-    needs: build-and-release
-    steps:
-      - name: Download artifacts
-        uses: actions/download-artifact@v4
-        with:
-          path: artifacts
-
-      - name: Prepare release assets
+          mkdir pkg
+          cp target/${{ matrix.target }}/release/mcp-bridge${{ runner.os == 'Windows' && '.exe' || '' }} pkg/${{ matrix.bin }}
+          cp -r conf README.md pkg/
+          tar -czf ${{ matrix.bin }}.tar.gz -C pkg .
+      - name: Package (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
         run: |
-          # 移动所有压缩包到根目录
-          find artifacts -name '*.tar.gz' -exec mv {} . \;
-          
-          # 列出所有准备上传的文件
-          ls -lh *.tar.gz
+          mkdir pkg
+          cp target/${{ matrix.target }}/release/mcp-bridge.exe pkg/${{ matrix.bin }}
+          cp conf/* README.md pkg/
+          tar -czf ${{ matrix.bin }}.tar.gz -C pkg .
 
-      - name: Upload to Release
-        uses: softprops/action-gh-release@v2
+      - uses: actions/upload-artifact@v4
         with:
-          files: |
-            mcp-bridge-*.tar.gz
+          name: ${{ matrix.bin }}.tar.gz
+          path: ${{ matrix.bin }}.tar.gz
+
+  attach-to-release:
+    if: github.event_name == 'release'
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - uses: actions/download-artifact@v4
+        with: { path: bins }
+      - run: find bins -name '*.tar.gz' -exec mv {} . \;
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: "*.tar.gz"
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
