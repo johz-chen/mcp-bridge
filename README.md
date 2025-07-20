@@ -10,6 +10,8 @@ MCP Bridge 是一个实现 MCP（Model Control Protocol）协议的桥接服务�
 
 ## 使用指南
 
+详细的使用说明请 [点击查看](https://github.com/johz-chen/mcp-bridge/issues/9)
+
 ### 1. 安装
 
 #### 预编译二进制
@@ -55,32 +57,47 @@ connection:
 #### `mcp_tools.json` 示例
 ```json
 {
-  "calculator": {
-    "command": "node",
-    "args": ["./example_mcp_tools/calculator.js"]
-  },
-  "datetime": {
-    "command": "node",
-    "args": ["./example_mcp_tools/datetime.js"]
-  },
-  "amap-maps": {
-    "command": "npx",
-    "args": ["-y", "@amap/amap-maps-mcp-server"],
-    "env": {
-      "AMAP_MAPS_API_KEY": "your-key"
+    "exchange-rate": {
+        "command": "npx",
+        "args": [
+            "-y",
+            "@karashiiro/exchange-rate-mcp"
+        ]
+    },
+    "amap-maps": {
+        "command": "npx",
+        "args": [
+            "-y",
+            "@amap/amap-maps-mcp-server"
+        ],
+        "env": {
+            "AMAP_MAPS_API_KEY": "your-key"
+        }
+    },
+    "example-node-tool": {
+        "command": "node",
+        "args": [
+            "/path/to/node-tool.js"
+        ]
+    },
+    "example-python-tool": {
+        "command": "python",
+        "args": [
+            "/path/to/python-tool.py"
+        ]
     }
-  }
 }
+
 ```
 
 ### 3. 启动服务
 
 ```bash
 # 使用默认配置文件
-mcp-bridge start
+./mcp-bridge start
 
 # 指定自定义配置文件
-mcp-bridge start \
+./mcp-bridge start \
   --config /path/to/custom_config.yaml \
   --tools-config /path/to/custom_mcp_tools.json
 ```
@@ -88,7 +105,7 @@ mcp-bridge start \
 ### 4. 命令行选项
 
 ```
-mcp-bridge start [OPTIONS]
+./mcp-bridge start [OPTIONS]
 
 选项：
   -c, --config <YAML_FILE>        主配置文件路径 [默认: conf/config.yaml]
@@ -100,7 +117,7 @@ mcp-bridge start [OPTIONS]
 服务使用 `tracing` 框架记录日志，默认日志级别为 `DEBUG`。可通过环境变量控制日志级别：
 
 ```bash
-RUST_LOG=warn mcp-bridge start
+RUST_LOG=warn ./mcp-bridge start
 ```
 
 ### 6. 服务管理
@@ -143,4 +160,4 @@ cargo clippy
 
 ## 贡献
 
-欢迎通过 Issues 和 Pull Requests 贡献代码。请确保所有更改都包含相应的测试。
+欢迎通过 Issues 提交问题，通过 Pull Requests 贡献代码吗，请确保所有更改都包含相应的测试。
