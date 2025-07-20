@@ -96,6 +96,11 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y pkg-config
 
+      # 非 Docker 平台的构建（保持不变）
+      - name: Build release binary
+        if: matrix.use_docker != true
+        run: cargo build --release --target ${{ matrix.target }}
+
       # 为 Windows 平台使用 PowerShell 脚本（保持不变）
       - name: Prepare release package (Windows)
         if: matrix.os == 'windows-latest'
