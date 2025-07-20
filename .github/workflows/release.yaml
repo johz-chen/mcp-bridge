@@ -19,11 +19,11 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { os: ubuntu-latest, target: x86_64-unknown-linux-gnu,   bin: mcp-bridge }
-          - { os: ubuntu-latest, target: aarch64-unknown-linux-gnu,  bin: mcp-bridge, use_cross: true }
-          - { os: macos-latest,  target: x86_64-apple-darwin,        bin: mcp-bridge }
-          - { os: macos-latest,  target: aarch64-apple-darwin,       bin: mcp-bridge }
-          - { os: windows-latest,target: x86_64-pc-windows-msvc,     bin: mcp-bridge.exe }
+          - { os: ubuntu-latest, target: x86_64-unknown-linux-gnu,   pkg: mcp-bridge-linux-x86_64 }
+          - { os: ubuntu-latest, target: aarch64-unknown-linux-gnu,  pkg: mcp-bridge-linux-aarch64, use_cross: true }
+          - { os: macos-latest,  target: x86_64-apple-darwin,        pkg: mcp-bridge-macos-x86_64 }
+          - { os: macos-latest,  target: aarch64-apple-darwin,       pkg: mcp-bridge-macos-aarch64 }
+          - { os: windows-latest,target: x86_64-pc-windows-msvc,     pkg: mcp-bridge-windows-x86_64.exe }
 
     steps:
       - uses: actions/checkout@v4
@@ -50,25 +50,25 @@ jobs:
         shell: bash
         run: |
           mkdir pkg
-          cp target/${{ matrix.target }}/release/mcp-bridge${{ runner.os == 'Windows' && '.exe' || '' }} pkg/${{ matrix.bin }}
+          cp target/${{ matrix.target }}/release/mcp-bridge${{ runner.os == 'Windows' && '.exe' || '' }} pkg/mcp-bridge
           cp -r conf mcp_tools README.md pkg/
-          tar -czf ${{ matrix.bin }}.tar.gz -C pkg .
+          tar -czf ${{ matrix.pkg }}.tar.gz -C pkg .
 
       - name: Package (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
           mkdir pkg
-          Copy-Item "target/${{ matrix.target }}/release/mcp-bridge.exe" "pkg/${{ matrix.bin }}"
+          Copy-Item "target/${{ matrix.target }}/release/mcp-bridge.exe" "pkg/mcp-bridge.exe"
           Copy-Item "conf" -Recurse -Destination "pkg"
           Copy-Item "mcp_tools" -Recurse -Destination "pkg"
           Copy-Item "README.md" "pkg"
-          tar -czf "${{ matrix.bin }}.tar.gz" -C pkg .
+          tar -czf "${{ matrix.pkg }}.tar.gz" -C pkg .
 
       - uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.bin }}.tar.gz
-          path: ${{ matrix.bin }}.tar.gz
+          name: ${{ matrix.pkg }}.tar.gz
+          path: ${{ matrix.pkg }}.tar.gz
 
   attach-to-release:
     if: github.event_name == 'release'
