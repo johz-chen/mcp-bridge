@@ -77,10 +77,10 @@ connection:
 
 ```bash
 # 使用默认配置文件
-mcp-bridge start
+./mcp-bridge start
 
 # 指定自定义配置文件
-mcp-bridge start \
+./mcp-bridge start \
   --config /path/to/custom_config.yaml \
   --tools-config /path/to/custom_mcp_tools.json
 ```
@@ -88,7 +88,7 @@ mcp-bridge start \
 ### 4. 命令行选项
 
 ```
-mcp-bridge start [OPTIONS]
+./mcp-bridge start [OPTIONS]
 
 选项：
   -c, --config <YAML_FILE>        主配置文件路径 [默认: conf/config.yaml]
@@ -100,7 +100,7 @@ mcp-bridge start [OPTIONS]
 服务使用 `tracing` 框架记录日志，默认日志级别为 `DEBUG`。可通过环境变量控制日志级别：
 
 ```bash
-RUST_LOG=warn mcp-bridge start
+RUST_LOG=warn ./mcp-bridge start
 ```
 
 ### 6. 服务管理
@@ -143,4 +143,4 @@ cargo clippy
 
 ## 贡献
 
-欢迎通过 Issues 和 Pull Requests 贡献代码。请确保所有更改都包含相应的测试。
+欢迎通过 Issues 提交问题，通过 Pull Requests 贡献代码吗，请确保所有更改都包含相应的测试。
