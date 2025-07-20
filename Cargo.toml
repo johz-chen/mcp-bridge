@@ -17,7 +17,7 @@ tracing = "0.1"
 tracing-subscriber = "0.3"
 async-trait = "0.1"
 rumqttc = "0.24"
-tokio-tungstenite = { version = "0.20", features = ["native-tls"] }
+tokio-tungstenite = { version = "0.20", features = ["rustls-tls-native-roots"] }
 futures-util = "0.3"
 anyhow = "1.0"
 thiserror = "1.0"

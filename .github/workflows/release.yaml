@@ -71,12 +71,9 @@ jobs:
           sudo docker run --rm -v "$PWD":/usr/src/myapp -w /usr/src/myapp rust:latest \
             sh -c '\
             apt-get update && \
-            apt-get install -y gcc-aarch64-linux-gnu libssl-dev && \
+            apt-get install -y gcc-aarch64-linux-gnu && \
             export CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc && \
             export CC_aarch64_unknown_linux_gnu=aarch64-linux-gnu-gcc && \
-            export OPENSSL_DIR=/usr && \
-            export OPENSSL_INCLUDE_DIR=/usr/include && \
-            export OPENSSL_LIB_DIR=/usr/lib/aarch64-linux-gnu && \
             export PKG_CONFIG_PATH=/usr/lib/aarch64-linux-gnu/pkgconfig && \
             rustup target add aarch64-unknown-linux-gnu && \
             cargo build --release --target aarch64-unknown-linux-gnu \
@@ -97,31 +94,7 @@ jobs:
         if: matrix.os == 'ubuntu-latest' && matrix.target == 'x86_64-unknown-linux-gnu'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libssl-dev pkg-config
-          # 设置 OpenSSL 环境变量
-          echo "OPENSSL_DIR=/usr" >> $GITHUB_ENV
-          echo "OPENSSL_INCLUDE_DIR=/usr/include" >> $GITHUB_ENV
-          echo "OPENSSL_LIB_DIR=/usr/lib/x86_64-linux-gnu" >> $GITHUB_ENV
-
-      # 仅 macOS 依赖安装（保持不变）
-      - name: Install macOS dependencies
-        if: startsWith(matrix.os, 'macos')
-        run: |
-          brew update
-          brew install openssl
-          # 设置 OpenSSL 环境变量
-          echo "OPENSSL_DIR=$(brew --prefix openssl)" >> $GITHUB_ENV
-
-      # 非 Docker 平台的构建（保持不变）
-      - name: Build release binary
-        if: matrix.use_docker != true
-        run: cargo build --release --target ${{ matrix.target }}
-        env:
-          OPENSSL_STATIC: 1
-          # 为所有平台设置 OpenSSL 环境变量
-          OPENSSL_DIR: ${{ env.OPENSSL_DIR || '' }}
-          OPENSSL_INCLUDE_DIR: ${{ env.OPENSSL_INCLUDE_DIR || '' }}
-          OPENSSL_LIB_DIR: ${{ env.OPENSSL_LIB_DIR || '' }}
+          sudo apt-get install -y pkg-config
 
       # 为 Windows 平台使用 PowerShell 脚本（保持不变）
       - name: Prepare release package (Windows)
