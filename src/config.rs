@@ -75,7 +75,7 @@ pub struct AppConfig {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(untagged)] 
+#[serde(untagged)]
 pub enum ServerConfig {
     Std {
         command: String,
@@ -91,7 +91,7 @@ pub enum ServerConfig {
 // BridgeConfig 结构
 #[derive(Debug, Clone)]
 pub struct BridgeConfig {
-    pub app_config: AppConfig,                   // 来自 config.yaml
+    pub app_config: AppConfig,                  // 来自 config.yaml
     pub servers: HashMap<String, ServerConfig>, // 来自 mcp_tools.json
 }
 

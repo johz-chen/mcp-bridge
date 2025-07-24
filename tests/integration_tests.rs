@@ -1,9 +1,9 @@
 use anyhow::Result;
 use mcp_bridge::config::{
-    AppConfig, BridgeConfig, ConfigError, ConnectionConfig, MqttConfig,
-    WebSocketConfig, ServerConfig
+    AppConfig, BridgeConfig, ConfigError, ConnectionConfig, MqttConfig, ServerConfig,
+    WebSocketConfig,
 };
-use mcp_bridge::process::{ManagedProcess};
+use mcp_bridge::process::ManagedProcess;
 use std::collections::HashMap;
 use std::io::Write;
 use tempfile::NamedTempFile;
@@ -475,18 +475,18 @@ async fn test_process_restart() {
 
 #[tokio::test]
 async fn test_sse_server_basic_functionality() -> Result<()> {
-    use wiremock::{MockServer, Mock, ResponseTemplate};
     use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
 
     let mock_server = MockServer::start().await;
-    
+
     // 设置 SSE 端点和调用端点
     Mock::given(method("GET"))
         .and(path("/sse"))
         .respond_with(
             ResponseTemplate::new(200)
                 .append_header("Content-Type", "text/event-stream")
-                .set_body_string("data: {\"jsonrpc\":\"2.0\",\"result\":\"test\"}\n\n")
+                .set_body_string("data: {\"jsonrpc\":\"2.0\",\"result\":\"test\"}\n\n"),
         )
         .mount(&mock_server)
         .await;
@@ -504,20 +504,20 @@ async fn test_sse_server_basic_functionality() -> Result<()> {
         tx,
         "test_server".to_string(),
     );
-    
+
     // 测试启动
     sse_server.start().await?;
     assert!(sse_server.is_running());
-    
+
     // 测试消息发送
     let message = r#"{"jsonrpc":"2.0","method":"tools/list"}"#;
     let result = sse_server.send(message).await;
     assert!(result.is_ok());
-    
+
     // 测试停止
     sse_server.stop().await;
     assert!(!sse_server.is_running());
-    
+
     Ok(())
 }
 
@@ -559,12 +559,18 @@ connection:
     yaml_file.write_all(yaml_content.as_bytes())?;
 
     let config = BridgeConfig::load_from_files(yaml_file.path(), json_file.path())?;
-    
+
     // 验证配置正确加载
     assert_eq!(config.servers.len(), 2);
-    assert!(matches!(config.servers["sse_server"], ServerConfig::Sse { .. }));
-    assert!(matches!(config.servers["std_server"], ServerConfig::Std { .. }));
-    
+    assert!(matches!(
+        config.servers["sse_server"],
+        ServerConfig::Sse { .. }
+    ));
+    assert!(matches!(
+        config.servers["std_server"],
+        ServerConfig::Std { .. }
+    ));
+
     Ok(())
 }
 
@@ -668,14 +674,17 @@ connection:
     json_file.write_all(json_content.as_bytes())?;
 
     let config = BridgeConfig::load_from_files(yaml_file.path(), json_file.path())?;
-    
+
     // 验证配置正确加载
     assert_eq!(config.servers.len(), 1);
-    assert!(matches!(config.servers["sse_server"], ServerConfig::Sse { .. }));
-    
+    assert!(matches!(
+        config.servers["sse_server"],
+        ServerConfig::Sse { .. }
+    ));
+
     // 验证配置有效
     assert!(config.validate().is_ok());
-    
+
     Ok(())
 }
 
@@ -713,8 +722,13 @@ async fn test_sse_config_invalid_url() -> Result<()> {
     // 验证空 URL 应该失败
     let result = config.validate();
     assert!(result.is_err());
-    assert!(result.unwrap_err().to_string().contains("url for server sse_server cannot be empty"));
-    
+    assert!(
+        result
+            .unwrap_err()
+            .to_string()
+            .contains("url for server sse_server cannot be empty")
+    );
+
     Ok(())
 }
 
@@ -754,12 +768,18 @@ connection:
     yaml_file.write_all(yaml_content.as_bytes())?;
 
     let config = BridgeConfig::load_from_files(yaml_file.path(), json_file.path())?;
-    
+
     // 验证两个服务器都被正确加载
     assert_eq!(config.servers.len(), 2);
-    assert!(matches!(config.servers["my_sse_server"], ServerConfig::Sse { .. }));
-    assert!(matches!(config.servers["another_server"], ServerConfig::Std { .. }));
-    
+    assert!(matches!(
+        config.servers["my_sse_server"],
+        ServerConfig::Sse { .. }
+    ));
+    assert!(matches!(
+        config.servers["another_server"],
+        ServerConfig::Std { .. }
+    ));
+
     Ok(())
 }
 
@@ -789,10 +809,10 @@ connection:
     json_file.write_all(json_content.as_bytes())?;
 
     let config = BridgeConfig::load_from_files(yaml_file.path(), json_file.path())?;
-    
+
     assert_eq!(config.servers.len(), 2);
     assert!(matches!(config.servers["sse1"], ServerConfig::Sse { .. }));
     assert!(matches!(config.servers["std1"], ServerConfig::Std { .. }));
-    
+
     Ok(())
 }

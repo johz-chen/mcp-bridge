@@ -80,7 +80,7 @@ mod tests {
     use super::*;
     use crate::bridge::core::Bridge;
     use crate::config::{
-        AppConfig, BridgeConfig, ConnectionConfig, MqttConfig, WebSocketConfig, ServerConfig
+        AppConfig, BridgeConfig, ConnectionConfig, MqttConfig, ServerConfig, WebSocketConfig,
     };
     use serde_json::json;
     use std::collections::{HashMap, HashSet};
@@ -191,7 +191,7 @@ mod tests {
         );
         bridge.config.servers.insert(
             "server2".to_string(),
-             ServerConfig::Std {
+            ServerConfig::Std {
                 command: "echo".to_string(),
                 args: vec![],
                 env: HashMap::new(),

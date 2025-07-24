@@ -153,11 +153,11 @@ async fn handle_tool_call(bridge: &mut Bridge, msg: Value) -> Result<()> {
                 "arguments": arguments
             }
         });
-        
+
         bridge
             .send_to_server(&server_name, &request.to_string())
             .await?;
-            
+
         info!("Forwarded tool call to server: {server_name} (original: {original_tool_name})");
         return Ok(());
     }

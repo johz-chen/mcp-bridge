@@ -1,4 +1,4 @@
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use eventsource_client::{Client, ClientBuilder, ReconnectOptions, SSE};
 use futures_util::StreamExt;
 use reqwest::Client as HttpClient;
@@ -41,16 +41,16 @@ impl SseServer {
         }
 
         info!("Starting SSE server: {}", self.url);
-        
+
         let (shutdown_tx, mut shutdown_rx) = mpsc::channel(1);
         let event_tx = self.output_tx.clone();
         let server_name = self.server_name.clone();
         let sse_url = self.url.clone();
 
         // 创建 SSE 客户端
-        let mut builder = ClientBuilder::for_url(&sse_url)
-            .map_err(|e| anyhow!("Invalid SSE URL: {:?}", e))?;
-            
+        let mut builder =
+            ClientBuilder::for_url(&sse_url).map_err(|e| anyhow!("Invalid SSE URL: {:?}", e))?;
+
         builder = builder.reconnect(
             ReconnectOptions::reconnect(true)
                 .retry_initial(false)
@@ -127,7 +127,7 @@ impl SseServer {
         // 使用相同的 URL 作为调用端点
         let call_url = format!("{}/call", self.url.trim_end_matches('/'));
         debug!("Sending SSE call to {}", call_url);
-        
+
         let response = self
             .http_client
             .post(&call_url)
@@ -138,11 +138,7 @@ impl SseServer {
         if !response.status().is_success() {
             let status = response.status();
             let body = response.text().await.unwrap_or_default();
-            return Err(anyhow!(
-                "SSE call failed with status {}: {}",
-                status,
-                body
-            ));
+            return Err(anyhow!("SSE call failed with status {}: {}", status, body));
         }
 
         Ok(())
@@ -153,13 +149,12 @@ impl SseServer {
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use wiremock::{MockServer, Mock, ResponseTemplate};
-    use wiremock::matchers::{method, path};
     use tokio::sync::mpsc;
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
 
     #[tokio::test]
     async fn test_sse_server_creation() {
@@ -169,7 +164,7 @@ mod tests {
             tx,
             "test_server".to_string(),
         );
-        
+
         assert_eq!(server.url, "http://localhost:8080/sse");
         assert_eq!(server.server_name, "test_server");
         assert!(!server.is_running());
@@ -197,17 +192,17 @@ mod tests {
     #[tokio::test]
     async fn test_sse_server_send_message() {
         let mock_server = MockServer::start().await;
-        
+
         // 设置 mock 响应 - 注意 URL 格式
         Mock::given(method("POST"))
-            .and(path("/sse/call"))  // 修改为 /sse/call 而不是 /call
+            .and(path("/sse/call")) // 修改为 /sse/call 而不是 /call
             .respond_with(ResponseTemplate::new(200))
             .mount(&mock_server)
             .await;
 
         let (tx, _) = mpsc::channel(1);
         let server = SseServer::new(
-            format!("{}/sse", mock_server.uri()),  // 基础 URL 是 /sse
+            format!("{}/sse", mock_server.uri()), // 基础 URL 是 /sse
             tx,
             "test_server".to_string(),
         );
@@ -220,7 +215,7 @@ mod tests {
     #[tokio::test]
     async fn test_sse_server_send_message_failure() {
         let mock_server = MockServer::start().await;
-        
+
         // 设置 mock 失败响应 - 同样修改路径
         Mock::given(method("POST"))
             .and(path("/sse/call"))
@@ -251,7 +246,7 @@ mod tests {
 
         let result1 = server.start().await;
         let result2 = server.start().await;
-        
+
         assert!(result1.is_ok());
         assert!(result2.is_ok());
         server.stop().await;

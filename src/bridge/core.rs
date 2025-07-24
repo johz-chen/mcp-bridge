@@ -1,6 +1,6 @@
 use super::*;
 use crate::config::{BridgeConfig, ConnectionConfig, ServerConfig};
-use crate::process::{ManagedProcess};
+use crate::process::ManagedProcess;
 use crate::sse_server::SseServer;
 use crate::transports::{MqttTransport, Transport, WebSocketTransport};
 use anyhow::{Context, anyhow};
@@ -86,7 +86,7 @@ impl Bridge {
             collected_servers: HashSet::new(),
         })
     }
-    
+
     pub async fn run(mut self) -> anyhow::Result<()> {
         info!("MCP Bridge started");
 
@@ -107,11 +107,8 @@ impl Bridge {
                     }
                 }
                 ServerConfig::Sse { url } => {
-                    let mut sse_server = SseServer::new(
-                        url,
-                        process_output_tx.clone(),
-                        server_name.clone(),
-                    );
+                    let mut sse_server =
+                        SseServer::new(url, process_output_tx.clone(), server_name.clone());
                     sse_server.start().await?;
                     info!("Started SSE server: {}", server_name);
                     self.sse_servers.insert(server_name.clone(), sse_server);
@@ -170,19 +167,19 @@ impl Bridge {
         self.shutdown().await?;
         Ok(())
     }
-    
+
     pub async fn send_to_server(&mut self, server_name: &str, message: &str) -> anyhow::Result<()> {
         if let Some(process_stdin) = self.processes_stdin.get_mut(server_name) {
             let message = message.to_string() + "\n";
             process_stdin.write_all(message.as_bytes()).await?;
             return Ok(());
         }
-        
+
         if let Some(sse_server) = self.sse_servers.get(server_name) {
             sse_server.send(message).await?;
             return Ok(());
         }
-        
+
         Err(anyhow::anyhow!("Server not found: {}", server_name))
     }
 
@@ -309,7 +306,7 @@ mod tests {
                 config,
                 transports,
                 processes_stdin: HashMap::new(),
-                sse_servers: HashMap::new(), 
+                sse_servers: HashMap::new(),
                 message_tx,
                 message_rx,
                 connection_config,
