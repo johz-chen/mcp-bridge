@@ -152,3 +152,108 @@ impl SseServer {
         self.is_running
     }
 }
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use wiremock::{MockServer, Mock, ResponseTemplate};
+    use wiremock::matchers::{method, path};
+    use tokio::sync::mpsc;
+
+    #[tokio::test]
+    async fn test_sse_server_creation() {
+        let (tx, _) = mpsc::channel(1);
+        let server = SseServer::new(
+            "http://localhost:8080/sse".to_string(),
+            tx,
+            "test_server".to_string(),
+        );
+        
+        assert_eq!(server.url, "http://localhost:8080/sse");
+        assert_eq!(server.server_name, "test_server");
+        assert!(!server.is_running());
+    }
+
+    #[tokio::test]
+    async fn test_sse_server_start_stop() {
+        let (tx, _rx) = mpsc::channel(10);
+        let mut server = SseServer::new(
+            "http://localhost:8080/sse".to_string(),
+            tx,
+            "test_server".to_string(),
+        );
+
+        // 启动
+        let result = server.start().await;
+        assert!(result.is_ok());
+        assert!(server.is_running());
+
+        // 停止
+        server.stop().await;
+        assert!(!server.is_running());
+    }
+
+    #[tokio::test]
+    async fn test_sse_server_send_message() {
+        let mock_server = MockServer::start().await;
+        
+        // 设置 mock 响应 - 注意 URL 格式
+        Mock::given(method("POST"))
+            .and(path("/sse/call"))  // 修改为 /sse/call 而不是 /call
+            .respond_with(ResponseTemplate::new(200))
+            .mount(&mock_server)
+            .await;
+
+        let (tx, _) = mpsc::channel(1);
+        let server = SseServer::new(
+            format!("{}/sse", mock_server.uri()),  // 基础 URL 是 /sse
+            tx,
+            "test_server".to_string(),
+        );
+
+        let message = r#"{"jsonrpc": "2.0", "method": "test", "params": {}}"#;
+        let result = server.send(message).await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_sse_server_send_message_failure() {
+        let mock_server = MockServer::start().await;
+        
+        // 设置 mock 失败响应 - 同样修改路径
+        Mock::given(method("POST"))
+            .and(path("/sse/call"))
+            .respond_with(ResponseTemplate::new(500))
+            .mount(&mock_server)
+            .await;
+
+        let (tx, _) = mpsc::channel(1);
+        let server = SseServer::new(
+            format!("{}/sse", mock_server.uri()),
+            tx,
+            "test_server".to_string(),
+        );
+
+        let message = r#"{"jsonrpc": "2.0", "method": "test"}"#;
+        let result = server.send(message).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_sse_server_start_twice() {
+        let (tx, _) = mpsc::channel(1);
+        let mut server = SseServer::new(
+            "http://localhost:8080/sse".to_string(),
+            tx,
+            "test_server".to_string(),
+        );
+
+        let result1 = server.start().await;
+        let result2 = server.start().await;
+        
+        assert!(result1.is_ok());
+        assert!(result2.is_ok());
+        server.stop().await;
+    }
+}
