@@ -75,6 +75,7 @@ pub struct AppConfig {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(untagged)] 
 pub enum ServerConfig {
     Std {
         command: String,
