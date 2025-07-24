@@ -80,7 +80,7 @@ mod tests {
     use super::*;
     use crate::bridge::core::Bridge;
     use crate::config::{
-        AppConfig, BridgeConfig, ConnectionConfig, MqttConfig, ProcessConfig, WebSocketConfig,
+        AppConfig, BridgeConfig, ConnectionConfig, MqttConfig, WebSocketConfig, ServerConfig
     };
     use serde_json::json;
     use std::collections::{HashMap, HashSet};
@@ -110,6 +110,7 @@ mod tests {
                 servers: HashMap::new(),
             },
             transports: vec![],
+            sse_servers: HashMap::new(),
             processes_stdin: HashMap::new(),
             message_tx: mpsc::channel(100).0,
             message_rx: mpsc::channel(100).1,
@@ -182,7 +183,7 @@ mod tests {
         // 设置服务器配置
         bridge.config.servers.insert(
             "server1".to_string(),
-            ProcessConfig {
+            ServerConfig::Std {
                 command: "echo".to_string(),
                 args: vec![],
                 env: HashMap::new(),
@@ -190,7 +191,7 @@ mod tests {
         );
         bridge.config.servers.insert(
             "server2".to_string(),
-            ProcessConfig {
+             ServerConfig::Std {
                 command: "echo".to_string(),
                 args: vec![],
                 env: HashMap::new(),

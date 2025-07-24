@@ -1,8 +1,9 @@
 use anyhow::Result;
 use mcp_bridge::config::{
-    AppConfig, BridgeConfig, ConfigError, ConnectionConfig, MqttConfig, ProcessConfig,
-    WebSocketConfig,
+    AppConfig, BridgeConfig, ConfigError, ConnectionConfig, MqttConfig,
+    WebSocketConfig, ServerConfig
 };
+use mcp_bridge::process::{ManagedProcess};
 use std::collections::HashMap;
 use std::io::Write;
 use tempfile::NamedTempFile;
@@ -11,7 +12,7 @@ use tokio::time::{Duration, timeout};
 
 #[tokio::test]
 async fn test_process_start_and_stop() {
-    let config = ProcessConfig {
+    let config = ServerConfig::Std {
         command: "echo".to_string(),
         args: vec!["hello world".to_string()],
         env: HashMap::new(),
@@ -20,7 +21,7 @@ async fn test_process_start_and_stop() {
     let (tx, mut rx) = mpsc::channel(10);
     let server_name = "test_server".to_string();
 
-    let mut process = mcp_bridge::process::ManagedProcess::new(&config).unwrap();
+    let mut process = ManagedProcess::new(&config).unwrap();
     process.start(tx, server_name.clone()).await.unwrap();
 
     // Give the process a moment to start
@@ -60,7 +61,7 @@ async fn test_config_loading() {
     let mut servers = HashMap::new();
     servers.insert(
         "test_server".to_string(),
-        ProcessConfig {
+        ServerConfig::Std {
             command: "echo".to_string(),
             args: vec!["hello".to_string()],
             env: HashMap::new(),
@@ -73,7 +74,9 @@ async fn test_config_loading() {
     };
 
     assert_eq!(config.servers.len(), 1);
-    assert_eq!(config.servers["test_server"].command, "echo");
+    if let ServerConfig::Std { command, .. } = &config.servers["test_server"] {
+        assert_eq!(command, "echo");
+    }
 }
 
 // 在集成测试中定义 Bridge 结构体的简化版本
@@ -148,7 +151,7 @@ async fn test_config_validation() {
     let mut valid_servers = HashMap::new();
     valid_servers.insert(
         "test_server".to_string(),
-        ProcessConfig {
+        ServerConfig::Std {
             command: "echo".to_string(),
             args: vec!["hello".to_string()],
             env: HashMap::new(),
@@ -181,7 +184,7 @@ async fn test_config_validation() {
     let mut invalid_servers = HashMap::new();
     invalid_servers.insert(
         "invalid_server".to_string(),
-        ProcessConfig {
+        ServerConfig::Std {
             command: "".to_string(), // 空命令
             args: vec![],
             env: HashMap::new(),
@@ -226,7 +229,7 @@ async fn test_process_with_environment_variables() {
     let mut env = HashMap::new();
     env.insert("TEST_VAR".to_string(), "test_value".to_string());
 
-    let config = ProcessConfig {
+    let config = ServerConfig::Std {
         command: if cfg!(windows) {
             "cmd".to_string()
         } else {
@@ -262,7 +265,7 @@ async fn test_process_with_environment_variables() {
 #[tokio::test]
 async fn test_process_with_arguments() {
     // 创建带有参数的进程配置
-    let config = ProcessConfig {
+    let config = ServerConfig::Std {
         command: if cfg!(windows) {
             "cmd".to_string()
         } else {
@@ -342,8 +345,11 @@ connection:
         "wss://test-loading.com"
     );
     assert_eq!(config.servers.len(), 1);
-    assert_eq!(config.servers["test_server"].command, "echo");
     assert_eq!(config.app_config.connection.heartbeat_interval, 30000);
+
+    if let ServerConfig::Std { command, .. } = &config.servers["test_server"] {
+        assert_eq!(command, "echo");
+    }
 
     Ok(())
 }
@@ -364,13 +370,13 @@ async fn test_config_file_not_found() {
 #[tokio::test]
 async fn test_multiple_processes() {
     // 创建两个进程配置
-    let config1 = ProcessConfig {
+    let config1 = ServerConfig::Std {
         command: "echo".to_string(),
         args: vec!["process one".to_string()],
         env: HashMap::new(),
     };
 
-    let config2 = ProcessConfig {
+    let config2 = ServerConfig::Std {
         command: "echo".to_string(),
         args: vec!["process two".to_string()],
         env: HashMap::new(),
@@ -416,7 +422,7 @@ async fn test_multiple_processes() {
 
 #[tokio::test]
 async fn test_process_stop_before_start() {
-    let config = ProcessConfig {
+    let config = ServerConfig::Std {
         command: "echo".to_string(),
         args: vec!["should not run".to_string()],
         env: HashMap::new(),
@@ -431,7 +437,7 @@ async fn test_process_stop_before_start() {
 
 #[tokio::test]
 async fn test_process_restart() {
-    let config = ProcessConfig {
+    let config = ServerConfig::Std {
         command: "echo".to_string(),
         args: vec!["restart test".to_string()],
         env: HashMap::new(),

@@ -1,11 +1,13 @@
 use super::*;
-use crate::config::{BridgeConfig, ConnectionConfig};
-use crate::process::ManagedProcess;
+use crate::config::{BridgeConfig, ConnectionConfig, ServerConfig};
+use crate::process::{ManagedProcess};
+use crate::sse_server::SseServer;
 use crate::transports::{MqttTransport, Transport, WebSocketTransport};
 use anyhow::{Context, anyhow};
 use serde_json::Value;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
+use tokio::io::AsyncWriteExt;
 use tokio::process::ChildStdin;
 use tokio::sync::mpsc;
 use tokio::time::{Duration, Instant, interval};
@@ -15,6 +17,7 @@ pub struct Bridge {
     pub config: BridgeConfig,
     pub transports: Vec<Box<dyn Transport>>,
     pub processes_stdin: HashMap<String, ChildStdin>,
+    pub sse_servers: HashMap<String, SseServer>,
     #[allow(dead_code)]
     pub message_tx: mpsc::Sender<Value>,
     pub message_rx: mpsc::Receiver<Value>,
@@ -67,6 +70,7 @@ impl Bridge {
             config,
             transports,
             processes_stdin: HashMap::new(),
+            sse_servers: HashMap::new(),
             message_tx,
             message_rx,
             connection_config,
@@ -82,25 +86,37 @@ impl Bridge {
             collected_servers: HashSet::new(),
         })
     }
-
+    
     pub async fn run(mut self) -> anyhow::Result<()> {
         info!("MCP Bridge started");
 
         let (process_output_tx, mut process_output_rx) = mpsc::channel(100);
 
-        let mut processes = HashMap::new();
-        for (server_name, process_config) in self.config.servers.clone() {
-            let mut process = ManagedProcess::new(&process_config)?;
-            process
-                .start(process_output_tx.clone(), server_name.clone())
-                .await?;
-            info!("Started server process: {}", server_name);
+        for (server_name, server_config) in self.config.servers.clone() {
+            match server_config {
+                ServerConfig::Std { command, args, env } => {
+                    let config = ServerConfig::Std { command, args, env };
+                    let mut process = ManagedProcess::new(&config)?;
+                    process
+                        .start(process_output_tx.clone(), server_name.clone())
+                        .await?;
+                    info!("Started process server: {}", server_name);
 
-            if let Some(stdin) = process.stdin.take() {
-                self.processes_stdin.insert(server_name.clone(), stdin);
+                    if let Some(stdin) = process.stdin.take() {
+                        self.processes_stdin.insert(server_name.clone(), stdin);
+                    }
+                }
+                ServerConfig::Sse { url } => {
+                    let mut sse_server = SseServer::new(
+                        url,
+                        process_output_tx.clone(),
+                        server_name.clone(),
+                    );
+                    sse_server.start().await?;
+                    info!("Started SSE server: {}", server_name);
+                    self.sse_servers.insert(server_name.clone(), sse_server);
+                }
             }
-
-            processes.insert(server_name, process);
         }
 
         for transport in &mut self.transports {
@@ -146,12 +162,28 @@ impl Bridge {
             }
         }
 
-        for (_, mut process) in processes {
-            process.stop().await?;
+        // 清理资源
+        for sse_server in self.sse_servers.values_mut() {
+            sse_server.stop().await;
         }
 
         self.shutdown().await?;
         Ok(())
+    }
+    
+    pub async fn send_to_server(&mut self, server_name: &str, message: &str) -> anyhow::Result<()> {
+        if let Some(process_stdin) = self.processes_stdin.get_mut(server_name) {
+            let message = message.to_string() + "\n";
+            process_stdin.write_all(message.as_bytes()).await?;
+            return Ok(());
+        }
+        
+        if let Some(sse_server) = self.sse_servers.get(server_name) {
+            sse_server.send(message).await?;
+            return Ok(());
+        }
+        
+        Err(anyhow::anyhow!("Server not found: {}", server_name))
     }
 
     pub async fn broadcast_message(&mut self, msg: String) -> anyhow::Result<()> {
@@ -277,6 +309,7 @@ mod tests {
                 config,
                 transports,
                 processes_stdin: HashMap::new(),
+                sse_servers: HashMap::new(), 
                 message_tx,
                 message_rx,
                 connection_config,

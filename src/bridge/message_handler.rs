@@ -144,22 +144,22 @@ async fn handle_tool_call(bridge: &mut Bridge, msg: Value) -> Result<()> {
     if let Some((server_name, original_tool_name)) =
         super::get_original_tool_name(bridge, prefixed_tool_name)
     {
-        if let Some(stdin) = bridge.processes_stdin.get_mut(&server_name) {
-            let request = json!({
-                "jsonrpc": "2.0",
-                "id": id,
-                "method": method,
-                "params": {
-                    "name": original_tool_name,
-                    "arguments": arguments
-                }
-            });
-
-            let message = request.to_string() + "\n";
-            stdin.write_all(message.as_bytes()).await?;
-            info!("Forwarded tool call to server: {server_name} (original: {original_tool_name})");
-            return Ok(());
-        }
+        let request = json!({
+            "jsonrpc": "2.0",
+            "id": id,
+            "method": method,
+            "params": {
+                "name": original_tool_name,
+                "arguments": arguments
+            }
+        });
+        
+        bridge
+            .send_to_server(&server_name, &request.to_string())
+            .await?;
+            
+        info!("Forwarded tool call to server: {server_name} (original: {original_tool_name})");
+        return Ok(());
     }
 
     let error_response = json!({
@@ -212,6 +212,7 @@ mod tests {
             },
             transports: vec![],
             processes_stdin: HashMap::new(),
+            sse_servers: HashMap::new(),
             message_tx: mpsc::channel(100).0,
             message_rx: mpsc::channel(100).1,
             connection_config: Arc::new(ConnectionConfig::default()),
