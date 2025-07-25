@@ -65,20 +65,6 @@ pub async fn handle_process_output(
                                 server_name, output
                             );
                         }
-                        
-                        // 检查是否完成工具收集
-                        if bridge.collected_servers.len() == bridge.config.servers.len() {
-                            bridge.tools_collected = true;
-                            info!("All tools collected, total: {}", bridge.tools.len());
-
-                            // 如果之前只上报了部分工具，发送变更通知
-                            if bridge.tools_list_response_sent {
-                                super::message_handler::notify_tools_changed(bridge).await?;
-                            } else if bridge.pending_tools_list_request.is_some() {
-                                // 如果还未上报，直接上报完整列表
-                                super::message_handler::reply_tools_list(bridge).await?;
-                            }
-                        }
                     }
                 }
             }

@@ -138,19 +138,6 @@ pub async fn reply_tools_list(bridge: &mut Bridge) -> Result<()> {
     Ok(())
 }
 
-// 新增函数：发送工具变更通知
-pub async fn notify_tools_changed(bridge: &mut Bridge) -> Result<()> {
-    let notification = json!({
-        "jsonrpc": "2.0",
-        "method": "workspace/toolsChanged",
-        "params": {}
-    });
-    
-    bridge.broadcast_message(notification.to_string()).await?;
-    info!("Sent workspace/toolsChanged notification");
-    Ok(())
-}
-
 async fn handle_tool_call(bridge: &mut Bridge, msg: Value) -> Result<()> {
     let id = msg["id"].clone();
     let method = msg["method"].as_str().unwrap_or("");
@@ -196,6 +183,19 @@ async fn handle_tool_call(bridge: &mut Bridge, msg: Value) -> Result<()> {
 
     Ok(())
 }
+
+pub async fn notify_tools_changed(bridge: &mut Bridge) -> Result<()> {
+    let notification = json!({
+        "jsonrpc": "2.0",
+        "method": "workspace/toolsChanged",
+        "params": {}
+    });
+    
+    bridge.broadcast_message(notification.to_string()).await?;
+    info!("Sent workspace/toolsChanged notification");
+    Ok(())
+}
+
 
 #[cfg(test)]
 mod tests {

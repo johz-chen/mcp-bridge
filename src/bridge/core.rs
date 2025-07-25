@@ -5,7 +5,7 @@ use crate::process::ManagedProcess;
 use crate::sse_server::SseServer;
 use crate::transports::{MqttTransport, Transport, WebSocketTransport};
 use anyhow::{Context, anyhow};
-use serde_json::Value;
+use serde_json::{Value, json};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use tokio::io::AsyncWriteExt;
@@ -112,6 +112,21 @@ impl Bridge {
                     sse_server.start().await?;
                     info!("Started SSE server: {}", server_name);
                     self.sse_servers.insert(server_name.clone(), sse_server);
+                    
+                    // 发送 tools/list 请求到 SSE 服务器
+                    let tools_request = json!({
+                        "jsonrpc": "2.0",
+                        "id": format!("tools-list-{}", server_name),
+                        "method": "tools/list"
+                    });
+                    
+                    if let Some(sse_server) = self.sse_servers.get_mut(&server_name) {
+                        if let Err(e) = sse_server.send(&tools_request.to_string()).await {
+                            error!("Failed to send tools/list to SSE server {}: {}", server_name, e);
+                        } else {
+                            debug!("Sent tools/list request to SSE server: {}", server_name);
+                        }
+                    }
                 }
             }
         }

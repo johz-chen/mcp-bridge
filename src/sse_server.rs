@@ -47,7 +47,6 @@ impl SseServer {
         let server_name = self.server_name.clone();
         let sse_url = self.url.clone();
 
-        // 创建 SSE 客户端
         let mut builder =
             ClientBuilder::for_url(&sse_url).map_err(|e| anyhow!("Invalid SSE URL: {:?}", e))?;
 
@@ -124,7 +123,6 @@ impl SseServer {
     }
 
     pub async fn send(&self, message: &str) -> Result<()> {
-        // 使用相同的 URL 作为调用端点
         let call_url = format!("{}/call", self.url.trim_end_matches('/'));
         debug!("Sending SSE call to {}", call_url);
 
@@ -179,12 +177,10 @@ mod tests {
             "test_server".to_string(),
         );
 
-        // 启动
         let result = server.start().await;
         assert!(result.is_ok());
         assert!(server.is_running());
 
-        // 停止
         server.stop().await;
         assert!(!server.is_running());
     }
@@ -193,16 +189,15 @@ mod tests {
     async fn test_sse_server_send_message() {
         let mock_server = MockServer::start().await;
 
-        // 设置 mock 响应 - 注意 URL 格式
         Mock::given(method("POST"))
-            .and(path("/sse/call")) // 修改为 /sse/call 而不是 /call
+            .and(path("/sse/call"))
             .respond_with(ResponseTemplate::new(200))
             .mount(&mock_server)
             .await;
 
         let (tx, _) = mpsc::channel(1);
         let server = SseServer::new(
-            format!("{}/sse", mock_server.uri()), // 基础 URL 是 /sse
+            format!("{}/sse", mock_server.uri()),
             tx,
             "test_server".to_string(),
         );
@@ -216,7 +211,6 @@ mod tests {
     async fn test_sse_server_send_message_failure() {
         let mock_server = MockServer::start().await;
 
-        // 设置 mock 失败响应 - 同样修改路径
         Mock::given(method("POST"))
             .and(path("/sse/call"))
             .respond_with(ResponseTemplate::new(500))
