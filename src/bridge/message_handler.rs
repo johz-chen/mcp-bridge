@@ -74,6 +74,7 @@ async fn initialize(bridge: &mut Bridge, msg: Value) -> Result<()> {
     bridge.tool_service_map.clear();
     bridge.collected_servers.clear();
     bridge.tools_collected = false;
+    bridge.tools_list_response_sent = false; // 重置标记
 
     for (server_name, stdin) in &mut bridge.processes_stdin {
         let tools_request = json!({
@@ -96,6 +97,9 @@ async fn handle_tools_list_request(bridge: &mut Bridge, msg: Value) -> Result<()
     bridge.pending_tools_list_request = Some(msg);
 
     if bridge.tools_collected {
+        reply_tools_list(bridge).await?;
+    } else if !bridge.tools.is_empty() {
+        // 如果已有部分工具，立即响应
         reply_tools_list(bridge).await?;
     }
 
@@ -126,8 +130,24 @@ pub async fn reply_tools_list(bridge: &mut Bridge) -> Result<()> {
 
         bridge.broadcast_message(response.to_string()).await?;
         info!("Sent tools/list response with {} tools", tools_list.len());
+        
+        // 标记已响应工具列表
+        bridge.tools_list_response_sent = true;
     }
 
+    Ok(())
+}
+
+// 新增函数：发送工具变更通知
+pub async fn notify_tools_changed(bridge: &mut Bridge) -> Result<()> {
+    let notification = json!({
+        "jsonrpc": "2.0",
+        "method": "workspace/toolsChanged",
+        "params": {}
+    });
+    
+    bridge.broadcast_message(notification.to_string()).await?;
+    info!("Sent workspace/toolsChanged notification");
     Ok(())
 }
 
@@ -226,6 +246,7 @@ mod tests {
             pending_tools_list_request: None,
             tools_collected: false,
             collected_servers: HashSet::new(),
+            tools_list_response_sent: false,
         }
     }
 
@@ -263,6 +284,7 @@ mod tests {
         assert!(bridge.tool_service_map.is_empty());
         assert!(bridge.collected_servers.is_empty());
         assert!(!bridge.tools_collected);
+        assert!(!bridge.tools_list_response_sent);
 
         Ok(())
     }
@@ -280,11 +302,16 @@ mod tests {
         handle_message(&mut bridge, tools_list_msg.clone()).await?;
         assert!(bridge.pending_tools_list_request.is_some());
 
-        // 标记工具已收集
-        bridge.tools_collected = true;
+        // 添加一些工具
+        bridge.tools.insert(
+            "test_tool".to_string(),
+            ("test_server".to_string(), json!({"name": "test_tool"})),
+        );
+
         // 第二次请求 - 应该立即回复
         handle_message(&mut bridge, tools_list_msg).await?;
         assert!(bridge.pending_tools_list_request.is_none());
+        assert!(bridge.tools_list_response_sent);
 
         Ok(())
     }
@@ -310,6 +337,16 @@ mod tests {
 
         // 验证请求已被处理
         assert!(bridge.pending_tools_list_request.is_none());
+        assert!(bridge.tools_list_response_sent);
+        Ok(())
+    }
+    
+    #[tokio::test]
+    async fn test_notify_tools_changed() -> Result<()> {
+        let mut bridge = create_test_bridge();
+        
+        let result = notify_tools_changed(&mut bridge).await;
+        assert!(result.is_ok());
         Ok(())
     }
 

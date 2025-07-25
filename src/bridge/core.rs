@@ -1,4 +1,5 @@
 use super::*;
+use crate::bridge::message_handler::{notify_tools_changed, reply_tools_list};
 use crate::config::{BridgeConfig, ConnectionConfig, ServerConfig};
 use crate::process::ManagedProcess;
 use crate::sse_server::SseServer;
@@ -32,6 +33,7 @@ pub struct Bridge {
     pub pending_tools_list_request: Option<Value>,
     pub tools_collected: bool,
     pub collected_servers: HashSet<String>,
+    pub tools_list_response_sent: bool,
 }
 
 impl Bridge {
@@ -41,7 +43,6 @@ impl Bridge {
 
         let mut transports: Vec<Box<dyn Transport>> = Vec::new();
 
-        // 初始化 WebSocket 传输
         if config.app_config.websocket.enabled {
             let ws = WebSocketTransport::new(
                 config.app_config.websocket.endpoint.clone(),
@@ -52,7 +53,6 @@ impl Bridge {
             transports.push(Box::new(ws));
         }
 
-        // 初始化 MQTT 传输
         if config.app_config.mqtt.enabled {
             let mqtt = MqttTransport::new(config.app_config.mqtt.clone(), message_tx.clone())
                 .await
@@ -60,7 +60,6 @@ impl Bridge {
             transports.push(Box::new(mqtt));
         }
 
-        // 确保至少有一个传输层启用
         if transports.is_empty() {
             return Err(anyhow!("No transports enabled in configuration"));
         }
@@ -84,6 +83,7 @@ impl Bridge {
             pending_tools_list_request: None,
             tools_collected: false,
             collected_servers: HashSet::new(),
+            tools_list_response_sent: false,
         })
     }
 
@@ -127,6 +127,10 @@ impl Bridge {
         let ping_interval = heartbeat_interval / 2;
 
         let mut ping_interval_timer = interval(Duration::from_millis(ping_interval));
+        
+        let partial_report_timeout = Duration::from_secs(6);
+        let partial_report_timer = tokio::time::sleep(partial_report_timeout);
+        tokio::pin!(partial_report_timer);
 
         loop {
             let timeout = tokio::time::sleep(Duration::from_millis(heartbeat_interval));
@@ -156,10 +160,45 @@ impl Bridge {
                         reconnect(&mut self).await?;
                     }
                 }
+                _ = &mut partial_report_timer, if !self.tools_list_response_sent => {
+                    // 标记所有未响应的服务器为已完成
+                    for server_name in self.config.servers.keys() {
+                        if !self.collected_servers.contains(server_name) {
+                            warn!(
+                                "Marking server {} as collected (timeout, no tools)",
+                                server_name
+                            );
+                            self.collected_servers.insert(server_name.clone());
+                        }
+                    }
+                    
+                    if self.pending_tools_list_request.is_some() && !self.tools.is_empty() {
+                        info!("Partial tool collection timeout, reporting {} tools", self.tools.len());
+                        reply_tools_list(&mut self).await?;
+                        
+                        // 确保在部分上报后发送变更通知
+                        if self.collected_servers.len() == self.config.servers.len() {
+                            self.tools_collected = true;
+                            info!("All tools collected after partial report, total: {}", self.tools.len());
+                            notify_tools_changed(&mut self).await?;
+                        }
+                    }
+                }
+            }
+            
+            // 检查是否完成工具收集
+            if !self.tools_collected && self.collected_servers.len() == self.config.servers.len() {
+                self.tools_collected = true;
+                info!("All tools collected, total: {}", self.tools.len());
+                
+                if self.tools_list_response_sent {
+                    notify_tools_changed(&mut self).await?;
+                } else if self.pending_tools_list_request.is_some() {
+                    reply_tools_list(&mut self).await?;
+                }
             }
         }
 
-        // 清理资源
         for sse_server in self.sse_servers.values_mut() {
             sse_server.stop().await;
         }
@@ -233,9 +272,11 @@ mod tests {
     use async_trait::async_trait;
     use serde_json::Value;
     use std::any::Any;
-    use std::collections::HashMap;
+    use std::collections::{HashMap, HashSet};
+    use std::sync::Arc;
+    use tokio::sync::mpsc;
+    use tokio::time::Instant;
 
-    // 模拟传输层实现
     #[derive(Debug)]
     struct MockTransport;
 
@@ -266,16 +307,15 @@ mod tests {
         }
     }
 
-    // 测试工具函数
     fn create_test_config() -> BridgeConfig {
         BridgeConfig {
             app_config: AppConfig {
                 websocket: WebSocketConfig {
-                    enabled: false, // 禁用真实WebSocket
+                    enabled: false,
                     endpoint: "".to_string(),
                 },
                 mqtt: MqttConfig {
-                    enabled: false, // 禁用真实MQTT
+                    enabled: false,
                     broker: "".to_string(),
                     port: 1883,
                     client_id: "".to_string(),
@@ -287,7 +327,6 @@ mod tests {
         }
     }
 
-    // 修改 Bridge::new 以允许注入模拟传输层
     impl Bridge {
         pub async fn new_with_transports(
             config: BridgeConfig,
@@ -296,7 +335,6 @@ mod tests {
             let connection_config = Arc::new(config.app_config.connection.clone());
             let (message_tx, message_rx) = mpsc::channel(100);
 
-            // 确保至少有一个传输层
             if transports.is_empty() {
                 return Err(anyhow!("No transports provided"));
             }
@@ -320,6 +358,7 @@ mod tests {
                 pending_tools_list_request: None,
                 tools_collected: false,
                 collected_servers: HashSet::new(),
+                tools_list_response_sent: false,
             })
         }
     }
