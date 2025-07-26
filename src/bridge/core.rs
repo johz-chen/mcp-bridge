@@ -13,6 +13,7 @@ use tokio::process::ChildStdin;
 use tokio::sync::mpsc;
 use tokio::time::{Duration, Instant, interval};
 use tracing::{debug, error, info, warn};
+use tokio::signal::unix::{signal, SignalKind};
 
 pub struct Bridge {
     pub config: BridgeConfig,
@@ -90,6 +91,26 @@ impl Bridge {
     pub async fn run(mut self) -> anyhow::Result<()> {
         info!("MCP Bridge started");
 
+        // 设置信号处理
+        let mut sigterm = signal(SignalKind::terminate())?;
+        let mut sigint = signal(SignalKind::interrupt())?;
+        let (shutdown_tx, mut shutdown_rx) = mpsc::channel(1);
+
+        // 启动信号监听任务
+        tokio::spawn(async move {
+            tokio::select! {
+                _ = sigterm.recv() => {
+                    shutdown_tx.send(()).await.ok();
+                }
+                _ = sigint.recv() => {
+                    shutdown_tx.send(()).await.ok();
+                }
+                _ = tokio::signal::ctrl_c() => {
+                    shutdown_tx.send(()).await.ok();
+                }
+            };
+        });
+
         let (process_output_tx, mut process_output_rx) = mpsc::channel(100);
 
         for (server_name, server_config) in self.config.servers.clone() {
@@ -120,7 +141,7 @@ impl Bridge {
                         "method": "tools/list"
                     });
                     
-                    if let Some(sse_server) = self.sse_servers.get_mut(&server_name) {
+                    if let Some(sse_server) = self.sse_servers.get(&server_name) {
                         if let Err(e) = sse_server.send(&tools_request.to_string()).await {
                             error!("Failed to send tools/list to SSE server {}: {}", server_name, e);
                         } else {
@@ -148,10 +169,16 @@ impl Bridge {
         tokio::pin!(partial_report_timer);
 
         loop {
-            let timeout = tokio::time::sleep(Duration::from_millis(heartbeat_interval));
+            let timeout_duration = Duration::from_millis(heartbeat_interval);
+            let timeout = tokio::time::sleep(timeout_duration);
             tokio::pin!(timeout);
 
             tokio::select! {
+                // 优先处理关闭信号
+                _ = shutdown_rx.recv() => {
+                    info!("Shutting down...");
+                    break;
+                }
                 Some(msg) = self.message_rx.recv() => {
                     self.last_activity = Instant::now();
                     handle_message(&mut self, msg).await?;
@@ -159,10 +186,6 @@ impl Bridge {
                 Some((server_name, output)) = process_output_rx.recv() => {
                     self.last_activity = Instant::now();
                     handle_process_output(&mut self, &server_name, output).await?;
-                }
-                _ = tokio::signal::ctrl_c() => {
-                    info!("Shutting down...");
-                    break;
                 }
                 _ = ping_interval_timer.tick() => {
                     send_ping(&mut self).await?;

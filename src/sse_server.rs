@@ -4,14 +4,15 @@ use futures_util::StreamExt;
 use reqwest::Client as HttpClient;
 use serde_json::Value;
 use tokio::sync::mpsc;
-use tokio::task::JoinHandle;
+use tokio::task::AbortHandle;
 use tracing::{debug, error, info, warn};
+use tokio::time::{timeout, Duration};
 
 #[derive(Debug)]
 pub struct SseServer {
     url: String,
     http_client: HttpClient,
-    event_loop_handle: Option<JoinHandle<()>>,
+    event_loop_handle: Option<AbortHandle>,
     output_tx: mpsc::Sender<(String, String)>,
     server_name: String,
     shutdown_tx: Option<mpsc::Sender<()>>,
@@ -47,22 +48,30 @@ impl SseServer {
         let server_name = self.server_name.clone();
         let sse_url = self.url.clone();
 
-        let mut builder =
-            ClientBuilder::for_url(&sse_url).map_err(|e| anyhow!("Invalid SSE URL: {:?}", e))?;
+        // 处理 SSE 客户端构建
+        let sse_client = match timeout(Duration::from_secs(10), async {
+            let builder = ClientBuilder::for_url(&sse_url)
+                .map_err(|e| anyhow!("Invalid SSE URL: {:?}", e))?;
+            Ok(builder
+                .reconnect(
+                    ReconnectOptions::reconnect(true)
+                        .retry_initial(false)
+                        .delay(Duration::from_secs(1))
+                        .backoff_factor(2)
+                        .delay_max(Duration::from_secs(30))
+                        .build(),
+                )
+                .build())
+        }).await {
+            Ok(Ok(client)) => client,
+            Ok(Err(e)) => return Err(e),
+            Err(_) => return Err(anyhow!("SSE connection timed out")),
+        };
 
-        builder = builder.reconnect(
-            ReconnectOptions::reconnect(true)
-                .retry_initial(false)
-                .delay(std::time::Duration::from_secs(1))
-                .backoff_factor(2)
-                .delay_max(std::time::Duration::from_secs(30))
-                .build(),
-        );
+        let mut stream = sse_client.stream();
 
-        let sse_client = builder.build();
-
+        // 创建可中止的任务
         let handle = tokio::spawn(async move {
-            let mut stream = sse_client.stream();
             loop {
                 tokio::select! {
                     _ = shutdown_rx.recv() => {
@@ -76,6 +85,7 @@ impl SseServer {
                                     debug!("Received SSE event (type: {}): {}", event.event_type, event.data);
                                     if let Err(e) = event_tx.send((server_name.clone(), event.data.clone())).await {
                                         error!("Failed to send SSE message: {}", e);
+                                        break;
                                     }
                                 } else {
                                     debug!("Received empty SSE event (type: {})", event.event_type);
@@ -99,7 +109,7 @@ impl SseServer {
             debug!("SSE server exiting");
         });
 
-        self.event_loop_handle = Some(handle);
+        self.event_loop_handle = Some(handle.abort_handle());
         self.shutdown_tx = Some(shutdown_tx);
         self.is_running = true;
 
@@ -114,24 +124,29 @@ impl SseServer {
         }
 
         if let Some(handle) = self.event_loop_handle.take() {
-            if let Err(e) = handle.await {
-                error!("Error joining SSE server task: {}", e);
-            }
+            handle.abort();
         }
 
         self.is_running = false;
     }
 
     pub async fn send(&self, message: &str) -> Result<()> {
-        let call_url = format!("{}/call", self.url.trim_end_matches('/'));
-        debug!("Sending SSE call to {}", call_url);
+        debug!("Sending SSE call to {}", self.url);
 
-        let response = self
-            .http_client
-            .post(&call_url)
-            .json(&serde_json::from_str::<Value>(message)?)
-            .send()
-            .await?;
+        // 显式处理 JSON 解析错误
+        let value = match serde_json::from_str::<Value>(message) {
+            Ok(v) => v,
+            Err(e) => return Err(anyhow!("Failed to parse message: {}", e)),
+        };
+
+        // 添加请求超时
+        let response = timeout(Duration::from_secs(10), async {
+            self.http_client
+                .post(&self.url)
+                .json(&value)
+                .send()
+                .await
+        }).await??;
 
         if !response.status().is_success() {
             let status = response.status();
