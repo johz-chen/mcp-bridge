@@ -1,9 +1,10 @@
 use anyhow::Result;
-use clap::{Parser, Subcommand}; // 添加 clap 导入
-use mcp_bridge::bridge::Bridge; // 添加 Bridge 导入
-use mcp_bridge::config::BridgeConfig; // 添加 BridgeConfig 导入
-use std::path::PathBuf; // 添加 PathBuf 导入
-use tracing::error; // 添加 tracing 宏导入 // 添加 Result 导入
+use clap::{Parser, Subcommand};
+use mcp_bridge::bridge::Bridge;
+use mcp_bridge::config::BridgeConfig;
+use std::path::PathBuf;
+use tracing::{error, info};
+use tokio::signal;
 
 #[derive(Parser)]
 #[command(name = "mcp-bridge")]
@@ -49,7 +50,13 @@ async fn main() -> Result<()> {
             config,
             tools_config,
         } => {
-            let cfg = BridgeConfig::load_from_files(&config, &tools_config)?;
+            let cfg = match BridgeConfig::load_from_files(&config, &tools_config) {
+                Ok(cfg) => cfg,
+                Err(e) => {
+                    error!("Failed to load config: {:#}", e);
+                    return Ok(());
+                }
+            };
 
             let bridge = match Bridge::new(cfg).await {
                 Ok(bridge) => bridge,
@@ -59,10 +66,33 @@ async fn main() -> Result<()> {
                 }
             };
 
-            if let Err(e) = bridge.run().await {
-                error!("Bridge exited with error: {:#}", e);
+            // 设置优雅关闭
+            let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
+            let bridge_handle = tokio::spawn(async move {
+                if let Err(e) = bridge.run().await {
+                    error!("Bridge exited with error: {:#}", e);
+                }
+            });
+
+            // 监听关闭信号
+            tokio::select! {
+                _ = signal::ctrl_c() => {
+                    info!("Received Ctrl+C, shutting down...");
+                }
+                _ = shutdown_rx => {
+                    info!("Received shutdown signal");
+                }
             }
 
+            // 发送中止信号给桥接器
+            bridge_handle.abort();
+            if let Err(e) = bridge_handle.await {
+                if !e.is_cancelled() {
+                    error!("Bridge task error: {:#}", e);
+                }
+            }
+
+            info!("Bridge shutdown complete");
             Ok(())
         }
     }

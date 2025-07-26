@@ -5,5 +5,9 @@
       "-y",
       "@karashiiro/exchange-rate-mcp"
     ]
-  }
+  },
+    "amap-maps": {
+      "type": "sse",
+      "url": "https://mcp.api-inference.modelscope.net/caa0bd914d9b44/sse"
+    }
 }

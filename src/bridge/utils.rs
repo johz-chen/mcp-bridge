@@ -41,6 +41,7 @@ mod tests {
                 servers: HashMap::new(),
             },
             transports: vec![],
+            sse_servers: HashMap::new(),
             processes_stdin: HashMap::new(),
             message_tx: tokio::sync::mpsc::channel(100).0,
             message_rx: tokio::sync::mpsc::channel(100).1,
