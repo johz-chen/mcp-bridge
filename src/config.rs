@@ -85,6 +85,8 @@ pub enum ServerConfig {
     },
     Sse {
         url: String,
+        #[serde(default)]
+        headers: HashMap<String, String>,
     },
 }
 
@@ -161,7 +163,7 @@ impl BridgeConfig {
                         )));
                     }
                 }
-                ServerConfig::Sse { url } => {
+                ServerConfig::Sse { url, .. } => {
                     if url.is_empty() {
                         return Err(ConfigError::InvalidFormat(format!(
                             "url for server {name} cannot be empty"

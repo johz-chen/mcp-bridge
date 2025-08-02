@@ -127,9 +127,9 @@ impl Bridge {
                         self.processes_stdin.insert(server_name.clone(), stdin);
                     }
                 }
-                ServerConfig::Sse { url } => {
+                ServerConfig::Sse { url, headers } => {
                     let mut sse_server =
-                        SseServer::new(url, process_output_tx.clone(), server_name.clone());
+                        SseServer::new(url, headers, process_output_tx.clone(), server_name.clone());
                     sse_server.start().await?;
                     info!("Started SSE server: {}", server_name);
                     self.sse_servers.insert(server_name.clone(), sse_server);
