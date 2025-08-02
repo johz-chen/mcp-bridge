@@ -10,7 +10,7 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use tokio::io::AsyncWriteExt;
 use tokio::process::ChildStdin;
-use tokio::signal::unix::{SignalKind, signal};
+use tokio::signal;
 use tokio::sync::mpsc;
 use tokio::time::{Duration, Instant, interval};
 use tracing::{debug, error, info, warn};
@@ -91,28 +91,16 @@ impl Bridge {
     pub async fn run(mut self) -> anyhow::Result<()> {
         info!("MCP Bridge started");
 
-        // 设置信号处理
-        let mut sigterm = signal(SignalKind::terminate())?;
-        let mut sigint = signal(SignalKind::interrupt())?;
         let (shutdown_tx, mut shutdown_rx) = mpsc::channel(1);
-
-        // 启动信号监听任务
         tokio::spawn(async move {
-            tokio::select! {
-                _ = sigterm.recv() => {
-                    shutdown_tx.send(()).await.ok();
-                }
-                _ = sigint.recv() => {
-                    shutdown_tx.send(()).await.ok();
-                }
-                _ = tokio::signal::ctrl_c() => {
-                    shutdown_tx.send(()).await.ok();
-                }
-            };
+            if let Err(e) = signal::ctrl_c().await {
+                eprintln!("Failed to listen for ctrl_c signal: {}", e);
+            } else {
+                shutdown_tx.send(()).await.ok();
+            }
         });
 
         let (process_output_tx, mut process_output_rx) = mpsc::channel(100);
-
         for (server_name, server_config) in self.config.servers.clone() {
             match server_config {
                 ServerConfig::Std { command, args, env } => {
@@ -137,21 +125,6 @@ impl Bridge {
                     sse_server.start().await?;
                     info!("Started SSE server: {}", server_name);
                     self.sse_servers.insert(server_name.clone(), sse_server);
-
-                    // // 发送 tools/list 请求到 SSE 服务器
-                    // let tools_request = json!({
-                    //     "jsonrpc": "2.0",
-                    //     "id": format!("tools-list-{}", server_name),
-                    //     "method": "tools/list"
-                    // });
-
-                    // if let Some(sse_server) = self.sse_servers.get(&server_name) {
-                    //     if let Err(e) = sse_server.send(&tools_request.to_string()).await {
-                    //         error!("Failed to send tools/list to SSE server {}: {}", server_name, e);
-                    //     } else {
-                    //         debug!("Sent tools/list request to SSE server: {}", server_name);
-                    //     }
-                    // }
                 }
             }
         }
