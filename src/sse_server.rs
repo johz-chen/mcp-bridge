@@ -136,7 +136,14 @@ pub async fn send(&self, message: &str) -> Result<String> {
 
     debug!("Received message from SSE server: {:?}", resp);
 
-    Ok(serde_json::to_string(&resp)?)
+    let resp_str = serde_json::to_string(&resp)?;
+
+    self.output_tx
+        .send((self.server_name.clone(), resp_str.clone()))
+        .await
+        .map_err(|e| anyhow!("Failed to send SSE response to bridge: {}", e))?;
+
+    Ok(resp_str)
 }
 
 }
