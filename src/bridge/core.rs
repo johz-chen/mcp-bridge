@@ -1,12 +1,16 @@
 use super::*;
-use crate::config::{BridgeConfig, ConnectionConfig};
+use crate::bridge::message_handler::{notify_tools_changed, reply_tools_list};
+use crate::config::{BridgeConfig, ConnectionConfig, ServerConfig};
 use crate::process::ManagedProcess;
+use crate::sse_server::SseServer;
 use crate::transports::{MqttTransport, Transport, WebSocketTransport};
 use anyhow::{Context, anyhow};
 use serde_json::Value;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
+use tokio::io::AsyncWriteExt;
 use tokio::process::ChildStdin;
+use tokio::signal;
 use tokio::sync::mpsc;
 use tokio::time::{Duration, Instant, interval};
 use tracing::{debug, error, info, warn};
@@ -15,6 +19,7 @@ pub struct Bridge {
     pub config: BridgeConfig,
     pub transports: Vec<Box<dyn Transport>>,
     pub processes_stdin: HashMap<String, ChildStdin>,
+    pub sse_servers: HashMap<String, SseServer>,
     #[allow(dead_code)]
     pub message_tx: mpsc::Sender<Value>,
     pub message_rx: mpsc::Receiver<Value>,
@@ -29,6 +34,7 @@ pub struct Bridge {
     pub pending_tools_list_request: Option<Value>,
     pub tools_collected: bool,
     pub collected_servers: HashSet<String>,
+    pub tools_list_response_sent: bool,
 }
 
 impl Bridge {
@@ -38,7 +44,6 @@ impl Bridge {
 
         let mut transports: Vec<Box<dyn Transport>> = Vec::new();
 
-        // 初始化 WebSocket 传输
         if config.app_config.websocket.enabled {
             let ws = WebSocketTransport::new(
                 config.app_config.websocket.endpoint.clone(),
@@ -49,7 +54,6 @@ impl Bridge {
             transports.push(Box::new(ws));
         }
 
-        // 初始化 MQTT 传输
         if config.app_config.mqtt.enabled {
             let mqtt = MqttTransport::new(config.app_config.mqtt.clone(), message_tx.clone())
                 .await
@@ -57,7 +61,6 @@ impl Bridge {
             transports.push(Box::new(mqtt));
         }
 
-        // 确保至少有一个传输层启用
         if transports.is_empty() {
             return Err(anyhow!("No transports enabled in configuration"));
         }
@@ -67,6 +70,7 @@ impl Bridge {
             config,
             transports,
             processes_stdin: HashMap::new(),
+            sse_servers: HashMap::new(),
             message_tx,
             message_rx,
             connection_config,
@@ -80,27 +84,49 @@ impl Bridge {
             pending_tools_list_request: None,
             tools_collected: false,
             collected_servers: HashSet::new(),
+            tools_list_response_sent: false,
         })
     }
 
     pub async fn run(mut self) -> anyhow::Result<()> {
         info!("MCP Bridge started");
 
-        let (process_output_tx, mut process_output_rx) = mpsc::channel(100);
-
-        let mut processes = HashMap::new();
-        for (server_name, process_config) in self.config.servers.clone() {
-            let mut process = ManagedProcess::new(&process_config)?;
-            process
-                .start(process_output_tx.clone(), server_name.clone())
-                .await?;
-            info!("Started server process: {}", server_name);
-
-            if let Some(stdin) = process.stdin.take() {
-                self.processes_stdin.insert(server_name.clone(), stdin);
+        let (shutdown_tx, mut shutdown_rx) = mpsc::channel(1);
+        tokio::spawn(async move {
+            if let Err(e) = signal::ctrl_c().await {
+                eprintln!("Failed to listen for ctrl_c signal: {e}");
+            } else {
+                shutdown_tx.send(()).await.ok();
             }
+        });
 
-            processes.insert(server_name, process);
+        let (process_output_tx, mut process_output_rx) = mpsc::channel(100);
+        for (server_name, server_config) in self.config.servers.clone() {
+            match server_config {
+                ServerConfig::Std { command, args, env } => {
+                    let config = ServerConfig::Std { command, args, env };
+                    let mut process = ManagedProcess::new(&config)?;
+                    process
+                        .start(process_output_tx.clone(), server_name.clone())
+                        .await?;
+                    info!("Started process server: {}", server_name);
+
+                    if let Some(stdin) = process.stdin.take() {
+                        self.processes_stdin.insert(server_name.clone(), stdin);
+                    }
+                }
+                ServerConfig::Sse { url, headers } => {
+                    let mut sse_server = SseServer::new(
+                        url,
+                        headers,
+                        process_output_tx.clone(),
+                        server_name.clone(),
+                    );
+                    sse_server.start().await?;
+                    info!("Started SSE server: {}", server_name);
+                    self.sse_servers.insert(server_name.clone(), sse_server);
+                }
+            }
         }
 
         for transport in &mut self.transports {
@@ -115,11 +141,21 @@ impl Bridge {
 
         let mut ping_interval_timer = interval(Duration::from_millis(ping_interval));
 
+        let partial_report_timeout = Duration::from_secs(6);
+        let partial_report_timer = tokio::time::sleep(partial_report_timeout);
+        tokio::pin!(partial_report_timer);
+
         loop {
-            let timeout = tokio::time::sleep(Duration::from_millis(heartbeat_interval));
+            let timeout_duration = Duration::from_millis(heartbeat_interval);
+            let timeout = tokio::time::sleep(timeout_duration);
             tokio::pin!(timeout);
 
             tokio::select! {
+                // 优先处理关闭信号
+                _ = shutdown_rx.recv() => {
+                    info!("Shutting down...");
+                    break;
+                }
                 Some(msg) = self.message_rx.recv() => {
                     self.last_activity = Instant::now();
                     handle_message(&mut self, msg).await?;
@@ -127,10 +163,6 @@ impl Bridge {
                 Some((server_name, output)) = process_output_rx.recv() => {
                     self.last_activity = Instant::now();
                     handle_process_output(&mut self, &server_name, output).await?;
-                }
-                _ = tokio::signal::ctrl_c() => {
-                    info!("Shutting down...");
-                    break;
                 }
                 _ = ping_interval_timer.tick() => {
                     send_ping(&mut self).await?;
@@ -143,15 +175,66 @@ impl Bridge {
                         reconnect(&mut self).await?;
                     }
                 }
+                _ = &mut partial_report_timer, if !self.tools_list_response_sent => {
+                    // 标记所有未响应的服务器为已完成
+                    for server_name in self.config.servers.keys() {
+                        if !self.collected_servers.contains(server_name) {
+                            warn!(
+                                "Marking server {} as collected (timeout, no tools)",
+                                server_name
+                            );
+                            self.collected_servers.insert(server_name.clone());
+                        }
+                    }
+
+                    if self.pending_tools_list_request.is_some() && !self.tools.is_empty() {
+                        info!("Partial tool collection timeout, reporting {} tools", self.tools.len());
+                        reply_tools_list(&mut self).await?;
+
+                        // 确保在部分上报后发送变更通知
+                        if self.collected_servers.len() == self.config.servers.len() {
+                            self.tools_collected = true;
+                            info!("All tools collected after partial report, total: {}", self.tools.len());
+                            notify_tools_changed(&mut self).await?;
+                        }
+                    }
+                }
+            }
+
+            // 检查是否完成工具收集
+            if !self.tools_collected && self.collected_servers.len() == self.config.servers.len() {
+                self.tools_collected = true;
+                info!("All tools collected, total: {}", self.tools.len());
+
+                if self.tools_list_response_sent {
+                    notify_tools_changed(&mut self).await?;
+                } else if self.pending_tools_list_request.is_some() {
+                    reply_tools_list(&mut self).await?;
+                }
             }
         }
 
-        for (_, mut process) in processes {
-            process.stop().await?;
+        for sse_server in self.sse_servers.values_mut() {
+            sse_server.stop().await;
         }
 
         self.shutdown().await?;
         Ok(())
+    }
+
+    pub async fn send_to_server(&mut self, server_name: &str, message: &str) -> anyhow::Result<()> {
+        if let Some(process_stdin) = self.processes_stdin.get_mut(server_name) {
+            let message = message.to_string() + "\n";
+            process_stdin.write_all(message.as_bytes()).await?;
+            return Ok(());
+        }
+
+        if let Some(sse_server) = self.sse_servers.get(server_name) {
+            sse_server.send(message).await?;
+            return Ok(());
+        }
+
+        Err(anyhow::anyhow!("Server not found: {}", server_name))
     }
 
     pub async fn broadcast_message(&mut self, msg: String) -> anyhow::Result<()> {
@@ -204,9 +287,11 @@ mod tests {
     use async_trait::async_trait;
     use serde_json::Value;
     use std::any::Any;
-    use std::collections::HashMap;
+    use std::collections::{HashMap, HashSet};
+    use std::sync::Arc;
+    use tokio::sync::mpsc;
+    use tokio::time::Instant;
 
-    // 模拟传输层实现
     #[derive(Debug)]
     struct MockTransport;
 
@@ -237,16 +322,15 @@ mod tests {
         }
     }
 
-    // 测试工具函数
     fn create_test_config() -> BridgeConfig {
         BridgeConfig {
             app_config: AppConfig {
                 websocket: WebSocketConfig {
-                    enabled: false, // 禁用真实WebSocket
+                    enabled: false,
                     endpoint: "".to_string(),
                 },
                 mqtt: MqttConfig {
-                    enabled: false, // 禁用真实MQTT
+                    enabled: false,
                     broker: "".to_string(),
                     port: 1883,
                     client_id: "".to_string(),
@@ -258,7 +342,6 @@ mod tests {
         }
     }
 
-    // 修改 Bridge::new 以允许注入模拟传输层
     impl Bridge {
         pub async fn new_with_transports(
             config: BridgeConfig,
@@ -267,7 +350,6 @@ mod tests {
             let connection_config = Arc::new(config.app_config.connection.clone());
             let (message_tx, message_rx) = mpsc::channel(100);
 
-            // 确保至少有一个传输层
             if transports.is_empty() {
                 return Err(anyhow!("No transports provided"));
             }
@@ -277,6 +359,7 @@ mod tests {
                 config,
                 transports,
                 processes_stdin: HashMap::new(),
+                sse_servers: HashMap::new(),
                 message_tx,
                 message_rx,
                 connection_config,
@@ -290,6 +373,7 @@ mod tests {
                 pending_tools_list_request: None,
                 tools_collected: false,
                 collected_servers: HashSet::new(),
+                tools_list_response_sent: false,
             })
         }
     }

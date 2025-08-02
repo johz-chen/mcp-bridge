@@ -138,6 +138,7 @@ mod tests {
             },
             transports: vec![],
             processes_stdin: HashMap::new(),
+            sse_servers: HashMap::new(),
             message_tx,
             message_rx,
             connection_config: Arc::new(ConnectionConfig {
@@ -156,6 +157,7 @@ mod tests {
             pending_tools_list_request: None,
             tools_collected: false,
             collected_servers: HashSet::new(),
+            tools_list_response_sent: false,
         }
     }
 

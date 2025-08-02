@@ -2,7 +2,7 @@ use super::core::Bridge;
 use anyhow::Result;
 use serde_json::Value;
 use tokio::time::Instant;
-use tracing::{debug, info};
+use tracing::{debug, info, warn};
 
 pub async fn handle_process_output(
     bridge: &mut Bridge,
@@ -52,14 +52,24 @@ pub async fn handle_process_output(
                                 }
                             }
 
-                            info!("Collected {} tools from {server_name}", tools.len());
-
                             if bridge.collected_servers.len() == bridge.config.servers.len() {
                                 bridge.tools_collected = true;
-                                info!("All tools collected, total: {}", bridge.tools.len());
-
-                                super::message_handler::reply_tools_list(bridge).await?;
+                                info!("All tools collected after processing server: {server_name}");
                             }
+
+                            info!("Collected {} tools from {server_name}", tools.len());
+
+                            let remaining = bridge
+                                .config
+                                .servers
+                                .len()
+                                .saturating_sub(bridge.collected_servers.len());
+                            info!("Waiting for {} more servers...", remaining);
+                        } else {
+                            warn!(
+                                "Invalid tools list format from server {}: {}",
+                                server_name, output
+                            );
                         }
                     }
                 }
@@ -80,7 +90,7 @@ mod tests {
     use super::*;
     use crate::bridge::core::Bridge;
     use crate::config::{
-        AppConfig, BridgeConfig, ConnectionConfig, MqttConfig, ProcessConfig, WebSocketConfig,
+        AppConfig, BridgeConfig, ConnectionConfig, MqttConfig, ServerConfig, WebSocketConfig,
     };
     use serde_json::json;
     use std::collections::{HashMap, HashSet};
@@ -89,7 +99,6 @@ mod tests {
     use tokio::sync::mpsc;
     use tokio::time::Instant;
 
-    // 创建测试桥接器
     fn create_test_bridge() -> Bridge {
         Bridge {
             config: BridgeConfig {
@@ -110,6 +119,7 @@ mod tests {
                 servers: HashMap::new(),
             },
             transports: vec![],
+            sse_servers: HashMap::new(),
             processes_stdin: HashMap::new(),
             message_tx: mpsc::channel(100).0,
             message_rx: mpsc::channel(100).1,
@@ -124,6 +134,7 @@ mod tests {
             pending_tools_list_request: None,
             tools_collected: false,
             collected_servers: HashSet::new(),
+            tools_list_response_sent: false,
         }
     }
 
@@ -135,8 +146,9 @@ mod tests {
         let result = handle_process_output(&mut bridge, "test_server", output).await;
         assert!(result.is_ok());
 
-        // 验证最后活动时间已更新
-        assert!(bridge.last_activity.elapsed() < Duration::from_millis(10));
+        let elapsed = bridge.last_activity.elapsed();
+        assert!(elapsed < Duration::from_millis(10) || elapsed.as_millis() == 0);
+
         Ok(())
     }
 
@@ -144,7 +156,6 @@ mod tests {
     async fn test_handle_tools_list_output() -> anyhow::Result<()> {
         let mut bridge = create_test_bridge();
 
-        // 创建工具列表响应
         let output = json!({
             "jsonrpc": "2.0",
             "id": "tools-list-test_server",
@@ -160,13 +171,11 @@ mod tests {
         let result = handle_process_output(&mut bridge, "test_server", output).await;
         assert!(result.is_ok());
 
-        // 验证工具已收集
         assert!(bridge.collected_servers.contains("test_server"));
         assert_eq!(bridge.tools.len(), 2);
         assert!(bridge.tools.contains_key("test_server_xzcli_tool1"));
         assert!(bridge.tools.contains_key("test_server_xzcli_tool2"));
 
-        // 验证服务映射
         assert_eq!(
             bridge.tool_service_map.get("test_server_xzcli_tool1"),
             Some(&("test_server".to_string(), "tool1".to_string()))
@@ -179,10 +188,9 @@ mod tests {
     async fn test_handle_all_servers_collected() -> anyhow::Result<()> {
         let mut bridge = create_test_bridge();
 
-        // 设置服务器配置
         bridge.config.servers.insert(
             "server1".to_string(),
-            ProcessConfig {
+            ServerConfig::Std {
                 command: "echo".to_string(),
                 args: vec![],
                 env: HashMap::new(),
@@ -190,21 +198,19 @@ mod tests {
         );
         bridge.config.servers.insert(
             "server2".to_string(),
-            ProcessConfig {
+            ServerConfig::Std {
                 command: "echo".to_string(),
                 args: vec![],
                 env: HashMap::new(),
             },
         );
 
-        // 设置待处理的工具列表请求
         bridge.pending_tools_list_request = Some(json!({
             "jsonrpc": "2.0",
             "id": "tools-list-request",
             "method": "tools/list"
         }));
 
-        // 创建第一个服务器的工具列表响应
         let output1 = json!({
             "jsonrpc": "2.0",
             "id": "tools-list-server1",
@@ -216,10 +222,8 @@ mod tests {
 
         handle_process_output(&mut bridge, "server1", output1).await?;
 
-        // 验证尚未全部收集完成
         assert!(!bridge.tools_collected);
 
-        // 创建第二个服务器的工具列表响应
         let output2 = json!({
             "jsonrpc": "2.0",
             "id": "tools-list-server2",
@@ -231,9 +235,9 @@ mod tests {
 
         handle_process_output(&mut bridge, "server2", output2).await?;
 
-        // 验证全部收集完成
         assert!(bridge.tools_collected);
         assert_eq!(bridge.tools.len(), 2);
+        assert_eq!(bridge.collected_servers.len(), 2);
 
         Ok(())
     }
@@ -242,18 +246,16 @@ mod tests {
     async fn test_handle_invalid_tools_list_output() -> anyhow::Result<()> {
         let mut bridge = create_test_bridge();
 
-        // 无效的工具列表响应
         let output = json!({
             "jsonrpc": "2.0",
             "id": "tools-list-test_server",
-            "result": "invalid" // 不是数组
+            "result": "invalid"
         })
         .to_string();
 
         let result = handle_process_output(&mut bridge, "test_server", output).await;
         assert!(result.is_ok());
 
-        // 验证没有工具被收集
         assert!(bridge.tools.is_empty());
 
         Ok(())

@@ -21,7 +21,22 @@ tokio-tungstenite = { version = "0.20", features = ["rustls-tls-native-roots"] }
 futures-util = "0.3"
 anyhow = "1.0"
 thiserror = "1.0"
+eventsource-client = "0.11.0"
+url = "2.4"  # 添加 url 依赖
+reqwest = { version = "0.12", features = ["json", "stream"] }
+openssl = { version = "0.10", features = ["vendored"] }
+rmcp = { git = "https://github.com/modelcontextprotocol/rust-sdk", branch = "main", features = [
+    "client",
+    "transport-sse-client",
+    "reqwest",
+    "transport-streamable-http-client",
+    "transport-child-process",
+    "tower",
+    "auth"
+] }
+bytes = "1.10.1"
 
 [dev-dependencies]
 tempfile = "3.3"
 tokio = { version = "1", features = ["rt", "macros", "test-util"] }
+wiremock = "0.5"

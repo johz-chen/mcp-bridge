@@ -44,15 +44,6 @@ pub struct ConnectionConfig {
     pub max_reconnect_attempts: u32,
 }
 
-// 本地进程配置
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ProcessConfig {
-    pub command: String,
-    pub args: Vec<String>,
-    #[serde(default)]
-    pub env: HashMap<String, String>,
-}
-
 // WebSocket 配置
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WebSocketConfig {
@@ -83,11 +74,27 @@ pub struct AppConfig {
     pub connection: ConnectionConfig,
 }
 
-// 主配置结构
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum ServerConfig {
+    Std {
+        command: String,
+        args: Vec<String>,
+        #[serde(default)]
+        env: HashMap<String, String>,
+    },
+    Sse {
+        url: String,
+        #[serde(default)]
+        headers: HashMap<String, String>,
+    },
+}
+
+// BridgeConfig 结构
 #[derive(Debug, Clone)]
 pub struct BridgeConfig {
-    pub app_config: AppConfig,                   // 来自 config.yaml
-    pub servers: HashMap<String, ProcessConfig>, // 来自 mcp_tools.json
+    pub app_config: AppConfig,                  // 来自 config.yaml
+    pub servers: HashMap<String, ServerConfig>, // 来自 mcp_tools.json
 }
 
 impl BridgeConfig {
@@ -112,7 +119,7 @@ impl BridgeConfig {
 
         // 加载 JSON 配置
         let json_content = fs::read_to_string(json_path)?;
-        let servers: HashMap<String, ProcessConfig> = serde_json::from_str(&json_content)?;
+        let servers: HashMap<String, ServerConfig> = serde_json::from_str(&json_content)?;
 
         let config = Self {
             app_config,
@@ -148,10 +155,21 @@ impl BridgeConfig {
         }
 
         for (name, server) in &self.servers {
-            if server.command.is_empty() {
-                return Err(ConfigError::InvalidFormat(format!(
-                    "process.command for server {name} cannot be empty"
-                )));
+            match server {
+                ServerConfig::Std { command, .. } => {
+                    if command.is_empty() {
+                        return Err(ConfigError::InvalidFormat(format!(
+                            "command for server {name} cannot be empty"
+                        )));
+                    }
+                }
+                ServerConfig::Sse { url, .. } => {
+                    if url.is_empty() {
+                        return Err(ConfigError::InvalidFormat(format!(
+                            "url for server {name} cannot be empty"
+                        )));
+                    }
+                }
             }
         }
 
@@ -209,7 +227,9 @@ connection:
             "wss://example.com/mcp"
         );
         assert_eq!(config.servers.len(), 1);
-        assert_eq!(config.servers["test_server"].command, "echo");
+        if let ServerConfig::Std { command, .. } = &config.servers["test_server"] {
+            assert_eq!(command, "echo");
+        }
         assert_eq!(config.app_config.connection.heartbeat_interval, 30000);
     }
 
@@ -232,17 +252,6 @@ connection:
         assert_eq!(config.heartbeat_timeout, 10000);
         assert_eq!(config.reconnect_interval, 5000);
         assert_eq!(config.max_reconnect_attempts, 10);
-    }
-
-    #[test]
-    fn test_process_config_default_env() {
-        let config = ProcessConfig {
-            command: "test".to_string(),
-            args: vec![],
-            env: HashMap::new(),
-        };
-
-        assert!(config.env.is_empty());
     }
 
     #[test]
