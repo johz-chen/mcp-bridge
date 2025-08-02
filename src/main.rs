@@ -3,8 +3,8 @@ use clap::{Parser, Subcommand};
 use mcp_bridge::bridge::Bridge;
 use mcp_bridge::config::BridgeConfig;
 use std::path::PathBuf;
-use tracing::{error, info};
 use tokio::signal;
+use tracing::{error, info};
 
 #[derive(Parser)]
 #[command(name = "mcp-bridge")]

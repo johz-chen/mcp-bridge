@@ -10,10 +10,10 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use tokio::io::AsyncWriteExt;
 use tokio::process::ChildStdin;
+use tokio::signal::unix::{SignalKind, signal};
 use tokio::sync::mpsc;
 use tokio::time::{Duration, Instant, interval};
 use tracing::{debug, error, info, warn};
-use tokio::signal::unix::{signal, SignalKind};
 
 pub struct Bridge {
     pub config: BridgeConfig,
@@ -128,8 +128,12 @@ impl Bridge {
                     }
                 }
                 ServerConfig::Sse { url, headers } => {
-                    let mut sse_server =
-                        SseServer::new(url, headers, process_output_tx.clone(), server_name.clone());
+                    let mut sse_server = SseServer::new(
+                        url,
+                        headers,
+                        process_output_tx.clone(),
+                        server_name.clone(),
+                    );
                     sse_server.start().await?;
                     info!("Started SSE server: {}", server_name);
                     self.sse_servers.insert(server_name.clone(), sse_server);
@@ -140,7 +144,7 @@ impl Bridge {
                     //     "id": format!("tools-list-{}", server_name),
                     //     "method": "tools/list"
                     // });
-                    
+
                     // if let Some(sse_server) = self.sse_servers.get(&server_name) {
                     //     if let Err(e) = sse_server.send(&tools_request.to_string()).await {
                     //         error!("Failed to send tools/list to SSE server {}: {}", server_name, e);
@@ -163,7 +167,7 @@ impl Bridge {
         let ping_interval = heartbeat_interval / 2;
 
         let mut ping_interval_timer = interval(Duration::from_millis(ping_interval));
-        
+
         let partial_report_timeout = Duration::from_secs(6);
         let partial_report_timer = tokio::time::sleep(partial_report_timeout);
         tokio::pin!(partial_report_timer);
@@ -209,11 +213,11 @@ impl Bridge {
                             self.collected_servers.insert(server_name.clone());
                         }
                     }
-                    
+
                     if self.pending_tools_list_request.is_some() && !self.tools.is_empty() {
                         info!("Partial tool collection timeout, reporting {} tools", self.tools.len());
                         reply_tools_list(&mut self).await?;
-                        
+
                         // 确保在部分上报后发送变更通知
                         if self.collected_servers.len() == self.config.servers.len() {
                             self.tools_collected = true;
@@ -223,12 +227,12 @@ impl Bridge {
                     }
                 }
             }
-            
+
             // 检查是否完成工具收集
             if !self.tools_collected && self.collected_servers.len() == self.config.servers.len() {
                 self.tools_collected = true;
                 info!("All tools collected, total: {}", self.tools.len());
-                
+
                 if self.tools_list_response_sent {
                     notify_tools_changed(&mut self).await?;
                 } else if self.pending_tools_list_request.is_some() {

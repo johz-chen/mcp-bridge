@@ -130,7 +130,7 @@ pub async fn reply_tools_list(bridge: &mut Bridge) -> Result<()> {
 
         bridge.broadcast_message(response.to_string()).await?;
         info!("Sent tools/list response with {} tools", tools_list.len());
-        
+
         // 标记已响应工具列表
         bridge.tools_list_response_sent = true;
     }
@@ -190,12 +190,11 @@ pub async fn notify_tools_changed(bridge: &mut Bridge) -> Result<()> {
         "method": "workspace/toolsChanged",
         "params": {}
     });
-    
+
     bridge.broadcast_message(notification.to_string()).await?;
     info!("Sent workspace/toolsChanged notification");
     Ok(())
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -340,11 +339,11 @@ mod tests {
         assert!(bridge.tools_list_response_sent);
         Ok(())
     }
-    
+
     #[tokio::test]
     async fn test_notify_tools_changed() -> Result<()> {
         let mut bridge = create_test_bridge();
-        
+
         let result = notify_tools_changed(&mut bridge).await;
         assert!(result.is_ok());
         Ok(())

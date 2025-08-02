@@ -1,18 +1,19 @@
 use anyhow::{Result, anyhow};
+use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 use rmcp::{
-    model::{ClientCapabilities, ClientInfo, Implementation, InitializeRequestParam, ClientRequest},
-    service::RunningService,
-    transport::sse_client::SseClientConfig,
     RoleClient, ServiceExt,
+    model::{
+        ClientCapabilities, ClientInfo, ClientRequest, Implementation, InitializeRequestParam,
+    },
+    service::RunningService,
     transport::SseClientTransport,
+    transport::sse_client::SseClientConfig,
 };
+use serde_json::{Value, json};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::mpsc;
 use tracing::{debug, error, info};
-use reqwest::header::{HeaderName, HeaderValue, HeaderMap};
-use serde_json::{Value, json}; 
-
 
 #[derive(Debug)]
 pub struct SseServer {
@@ -91,7 +92,11 @@ impl SseServer {
 
         // List tools
         let tools = client.list_tools(Default::default()).await?;
-        info!("Collected {} tools from SSE server {}", tools.tools.len(), self.server_name);
+        info!(
+            "Collected {} tools from SSE server {}",
+            tools.tools.len(),
+            self.server_name
+        );
 
         let response = serde_json::json!({
             "jsonrpc": "2.0",
@@ -101,7 +106,11 @@ impl SseServer {
             }
         });
 
-        if let Err(e) = self.output_tx.send((self.server_name.clone(), response.to_string())).await {
+        if let Err(e) = self
+            .output_tx
+            .send((self.server_name.clone(), response.to_string()))
+            .await
+        {
             error!("Failed to send tools list to bridge: {}", e);
         }
 
@@ -124,46 +133,48 @@ impl SseServer {
         self.is_running
     }
 
-pub async fn send(&self, message: &str) -> Result<String> {
-    debug!("Sending message to SSE server: {}", message);
+    pub async fn send(&self, message: &str) -> Result<String> {
+        debug!("Sending message to SSE server: {}", message);
 
-    let client = self.transport.as_ref()
-        .ok_or_else(|| anyhow!("SSE client not initialized"))?;
+        let client = self
+            .transport
+            .as_ref()
+            .ok_or_else(|| anyhow!("SSE client not initialized"))?;
 
-    let request_value: Value = serde_json::from_str(message)
-        .map_err(|e| anyhow!("Invalid JSON: {}", e))?;
-    let original_id = request_value.get("id").cloned().unwrap_or(Value::Null);
+        let request_value: Value =
+            serde_json::from_str(message).map_err(|e| anyhow!("Invalid JSON: {}", e))?;
+        let original_id = request_value.get("id").cloned().unwrap_or(Value::Null);
 
-    let rpc_req: ClientRequest = serde_json::from_str(message)
-        .map_err(|e| anyhow!("Invalid JSON-RPC: {}", e))?;
+        let rpc_req: ClientRequest =
+            serde_json::from_str(message).map_err(|e| anyhow!("Invalid JSON-RPC: {}", e))?;
 
-    let resp = client.send_request(rpc_req).await?;
-    let mut resp_value = serde_json::to_value(&resp)?;
+        let resp = client.send_request(rpc_req).await?;
+        let mut resp_value = serde_json::to_value(&resp)?;
 
-    let final_response = if resp_value.get("result").is_some() || resp_value.get("error").is_some() {
-        if resp_value.get("id").is_none() {
-            resp_value["id"] = original_id.clone();
-        }
-        resp_value
-    } else {
-        json!({
-            "id": original_id,
-            "jsonrpc": "2.0",
-            "result": resp_value
-        })
-    };
+        let final_response =
+            if resp_value.get("result").is_some() || resp_value.get("error").is_some() {
+                if resp_value.get("id").is_none() {
+                    resp_value["id"] = original_id.clone();
+                }
+                resp_value
+            } else {
+                json!({
+                    "id": original_id,
+                    "jsonrpc": "2.0",
+                    "result": resp_value
+                })
+            };
 
-    let resp_str = serde_json::to_string(&final_response)?;
+        let resp_str = serde_json::to_string(&final_response)?;
 
-    self.output_tx
-        .send((self.server_name.clone(), resp_str.clone()))
-        .await
-        .map_err(|e| anyhow!("Failed to send SSE response to bridge: {}", e))?;
+        self.output_tx
+            .send((self.server_name.clone(), resp_str.clone()))
+            .await
+            .map_err(|e| anyhow!("Failed to send SSE response to bridge: {}", e))?;
 
-    Ok(resp_str)
+        Ok(resp_str)
+    }
 }
-}
-
 
 #[cfg(test)]
 mod tests {

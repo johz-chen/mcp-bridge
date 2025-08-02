@@ -53,12 +53,10 @@ pub async fn handle_process_output(
                             }
 
                             info!("Collected {} tools from {server_name}", tools.len());
-                            
-                            let remaining = bridge.config.servers.len() - bridge.collected_servers.len();
-                            info!(
-                                "Waiting for {} more servers...",
-                                remaining
-                            );
+
+                            let remaining =
+                                bridge.config.servers.len() - bridge.collected_servers.len();
+                            info!("Waiting for {} more servers...", remaining);
                         } else {
                             warn!(
                                 "Invalid tools list format from server {}: {}",

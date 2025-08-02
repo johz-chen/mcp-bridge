@@ -1,4 +1,5 @@
 use super::Transport;
+use anyhow::anyhow;
 use async_trait::async_trait;
 use futures_util::{SinkExt, StreamExt};
 use serde_json::Value;
@@ -8,13 +9,12 @@ use std::sync::Arc;
 use tokio::net::TcpStream;
 use tokio::sync::Mutex;
 use tokio::sync::mpsc;
+use tokio::time::{Duration, timeout};
 use tokio_tungstenite::{
     MaybeTlsStream, WebSocketStream, connect_async,
     tungstenite::protocol::{CloseFrame, Message as WsMessage},
 };
 use tracing::{debug, error, warn};
-use tokio::time::{timeout, Duration};
-use anyhow::anyhow;
 
 // 定义类型别名以简化复杂类型
 type WebSocketSink =
@@ -31,7 +31,7 @@ pub struct WebSocketTransport {
 impl WebSocketTransport {
     pub async fn new(endpoint: String, tx: mpsc::Sender<Value>) -> anyhow::Result<Self> {
         debug!("Connecting to WebSocket endpoint: {}", endpoint);
-        
+
         // 添加连接超时
         let connect_result = timeout(Duration::from_secs(10), connect_async(&endpoint)).await;
         let (ws_stream, _) = match connect_result {
@@ -39,7 +39,7 @@ impl WebSocketTransport {
             Ok(Err(e)) => return Err(anyhow!("WebSocket connection failed: {}", e)),
             Err(_) => return Err(anyhow!("WebSocket connection timed out")),
         };
-        
+
         debug!("WebSocket connection established");
 
         let (write, read) = ws_stream.split();
@@ -110,7 +110,7 @@ impl WebSocketTransport {
         }
 
         debug!("Reconnecting to WebSocket endpoint: {}", self.endpoint);
-        
+
         // 添加连接超时
         let connect_result = timeout(Duration::from_secs(10), connect_async(&self.endpoint)).await;
         let (ws_stream, _) = match connect_result {
@@ -118,7 +118,7 @@ impl WebSocketTransport {
             Ok(Err(e)) => return Err(anyhow!("WebSocket reconnection failed: {}", e)),
             Err(_) => return Err(anyhow!("WebSocket reconnection timed out")),
         };
-        
+
         let (write, read) = ws_stream.split();
 
         *self.writer.lock().await = Some(write);
