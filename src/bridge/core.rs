@@ -5,7 +5,7 @@ use crate::process::ManagedProcess;
 use crate::sse_server::SseServer;
 use crate::transports::{MqttTransport, Transport, WebSocketTransport};
 use anyhow::{Context, anyhow};
-use serde_json::{Value, json};
+use serde_json::Value;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use tokio::io::AsyncWriteExt;
