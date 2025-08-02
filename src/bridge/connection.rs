@@ -108,7 +108,6 @@ mod tests {
     use tokio::sync::mpsc;
     use tokio::time::{Duration, Instant};
 
-    // 创建测试桥接器
     fn create_test_bridge() -> Bridge {
         let (message_tx, _) = mpsc::channel(100);
         let (_, message_rx) = mpsc::channel(100);
@@ -158,6 +157,7 @@ mod tests {
             tools_collected: false,
             collected_servers: HashSet::new(),
             tools_list_response_sent: false,
+            active_servers: HashSet::new(),
         }
     }
 

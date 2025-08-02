@@ -35,7 +35,7 @@ pub struct Bridge {
     pub tools_collected: bool,
     pub collected_servers: HashSet<String>,
     pub tools_list_response_sent: bool,
-    pub active_servers: HashSet<String>, 
+    pub active_servers: HashSet<String>,
 }
 
 impl Bridge {
@@ -86,7 +86,7 @@ impl Bridge {
             tools_collected: false,
             collected_servers: HashSet::new(),
             tools_list_response_sent: false,
-            active_servers: HashSet::new(), 
+            active_servers: HashSet::new(),
         })
     }
 
@@ -109,12 +109,15 @@ impl Bridge {
                     let config = ServerConfig::Std { command, args, env };
                     match ManagedProcess::new(&config) {
                         Ok(mut process) => {
-                            if let Err(e) = process.start(process_output_tx.clone(), server_name.clone()).await {
+                            if let Err(e) = process
+                                .start(process_output_tx.clone(), server_name.clone())
+                                .await
+                            {
                                 warn!("Failed to start process server {}: {}", server_name, e);
                                 continue;
                             }
                             info!("Started process server: {}", server_name);
-                            
+
                             if let Some(stdin) = process.stdin.take() {
                                 self.processes_stdin.insert(server_name.clone(), stdin);
                             }
@@ -212,9 +215,7 @@ impl Bridge {
                 }
             }
 
-            if !self.tools_collected && 
-               self.collected_servers.len() == self.active_servers.len() 
-            {
+            if !self.tools_collected && self.collected_servers.len() == self.active_servers.len() {
                 self.tools_collected = true;
                 info!("All tools collected, total: {}", self.tools.len());
 
@@ -386,6 +387,7 @@ mod tests {
                 tools_collected: false,
                 collected_servers: HashSet::new(),
                 tools_list_response_sent: false,
+                active_servers: HashSet::new(),
             })
         }
     }
@@ -398,6 +400,33 @@ mod tests {
         assert!(bridge.is_ok());
     }
 
+    fn create_test_bridge() -> Bridge {
+        let config = create_test_config();
+        let (message_tx, message_rx) = mpsc::channel(100);
+
+        Bridge {
+            config,
+            transports: vec![],
+            sse_servers: HashMap::new(),
+            processes_stdin: HashMap::new(),
+            message_tx,
+            message_rx,
+            connection_config: Arc::new(ConnectionConfig::default()),
+            is_connected: true,
+            reconnect_attempt: 0,
+            initialized: false,
+            tools: HashMap::new(),
+            tool_service_map: HashMap::new(),
+            last_activity: Instant::now(),
+            last_ping_sent: Instant::now(),
+            pending_tools_list_request: None,
+            tools_collected: false,
+            collected_servers: HashSet::new(),
+            tools_list_response_sent: false,
+            active_servers: HashSet::new(),
+        }
+    }
+
     #[tokio::test]
     async fn test_bridge_without_transports() {
         let config = create_test_config();
@@ -408,11 +437,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_broadcast_message() {
-        let config = create_test_config();
-        let mock_transport = Box::new(MockTransport);
-        let mut bridge = Bridge::new_with_transports(config, vec![mock_transport])
-            .await
-            .unwrap();
+        let mut bridge = create_test_bridge();
 
         let result = bridge
             .broadcast_message(r#"{"test": "message"}"#.to_string())

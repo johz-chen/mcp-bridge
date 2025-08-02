@@ -245,6 +245,7 @@ mod tests {
             tools_collected: false,
             collected_servers: HashSet::new(),
             tools_list_response_sent: false,
+            active_servers: HashSet::new(),
         }
     }
 
