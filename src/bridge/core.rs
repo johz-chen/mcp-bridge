@@ -35,6 +35,7 @@ pub struct Bridge {
     pub tools_collected: bool,
     pub collected_servers: HashSet<String>,
     pub tools_list_response_sent: bool,
+    pub active_servers: HashSet<String>, 
 }
 
 impl Bridge {
@@ -85,6 +86,7 @@ impl Bridge {
             tools_collected: false,
             collected_servers: HashSet::new(),
             tools_list_response_sent: false,
+            active_servers: HashSet::new(), 
         })
     }
 
@@ -105,14 +107,22 @@ impl Bridge {
             match server_config {
                 ServerConfig::Std { command, args, env } => {
                     let config = ServerConfig::Std { command, args, env };
-                    let mut process = ManagedProcess::new(&config)?;
-                    process
-                        .start(process_output_tx.clone(), server_name.clone())
-                        .await?;
-                    info!("Started process server: {}", server_name);
-
-                    if let Some(stdin) = process.stdin.take() {
-                        self.processes_stdin.insert(server_name.clone(), stdin);
+                    match ManagedProcess::new(&config) {
+                        Ok(mut process) => {
+                            if let Err(e) = process.start(process_output_tx.clone(), server_name.clone()).await {
+                                warn!("Failed to start process server {}: {}", server_name, e);
+                                continue;
+                            }
+                            info!("Started process server: {}", server_name);
+                            
+                            if let Some(stdin) = process.stdin.take() {
+                                self.processes_stdin.insert(server_name.clone(), stdin);
+                            }
+                            self.active_servers.insert(server_name.clone());
+                        }
+                        Err(e) => {
+                            warn!("Failed to create process for server {}: {}", server_name, e);
+                        }
                     }
                 }
                 ServerConfig::Sse { url, headers } => {
@@ -122,11 +132,19 @@ impl Bridge {
                         process_output_tx.clone(),
                         server_name.clone(),
                     );
-                    sse_server.start().await?;
-                    info!("Started SSE server: {}", server_name);
-                    self.sse_servers.insert(server_name.clone(), sse_server);
+                    if let Err(e) = sse_server.start().await {
+                        warn!("Failed to start SSE server {}: {}", server_name, e);
+                    } else {
+                        info!("Started SSE server: {}", server_name);
+                        self.sse_servers.insert(server_name.clone(), sse_server);
+                        self.active_servers.insert(server_name.clone());
+                    }
                 }
             }
+        }
+
+        if self.active_servers.is_empty() {
+            return Err(anyhow!("No active servers"));
         }
 
         for transport in &mut self.transports {
@@ -190,19 +208,13 @@ impl Bridge {
                     if self.pending_tools_list_request.is_some() && !self.tools.is_empty() {
                         info!("Partial tool collection timeout, reporting {} tools", self.tools.len());
                         reply_tools_list(&mut self).await?;
-
-                        // 确保在部分上报后发送变更通知
-                        if self.collected_servers.len() == self.config.servers.len() {
-                            self.tools_collected = true;
-                            info!("All tools collected after partial report, total: {}", self.tools.len());
-                            notify_tools_changed(&mut self).await?;
-                        }
                     }
                 }
             }
 
-            // 检查是否完成工具收集
-            if !self.tools_collected && self.collected_servers.len() == self.config.servers.len() {
+            if !self.tools_collected && 
+               self.collected_servers.len() == self.active_servers.len() 
+            {
                 self.tools_collected = true;
                 info!("All tools collected, total: {}", self.tools.len());
 

@@ -74,7 +74,7 @@ async fn initialize(bridge: &mut Bridge, msg: Value) -> Result<()> {
     bridge.tool_service_map.clear();
     bridge.collected_servers.clear();
     bridge.tools_collected = false;
-    bridge.tools_list_response_sent = false; // 重置标记
+    bridge.tools_list_response_sent = false;
 
     for (server_name, stdin) in &mut bridge.processes_stdin {
         let tools_request = json!({
@@ -131,7 +131,6 @@ pub async fn reply_tools_list(bridge: &mut Bridge) -> Result<()> {
         bridge.broadcast_message(response.to_string()).await?;
         info!("Sent tools/list response with {} tools", tools_list.len());
 
-        // 标记已响应工具列表
         bridge.tools_list_response_sent = true;
     }
 
