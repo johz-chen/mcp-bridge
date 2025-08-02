@@ -55,6 +55,7 @@ mod tests {
             last_ping_sent: tokio::time::Instant::now(),
             pending_tools_list_request: None,
             tools_collected: false,
+            tools_list_response_sent: false,
             collected_servers: std::collections::HashSet::new(),
         }
     }

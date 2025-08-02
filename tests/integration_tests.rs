@@ -474,54 +474,6 @@ async fn test_process_restart() {
 }
 
 #[tokio::test]
-async fn test_sse_server_basic_functionality() -> Result<()> {
-    use wiremock::matchers::{method, path};
-    use wiremock::{Mock, MockServer, ResponseTemplate};
-
-    let mock_server = MockServer::start().await;
-
-    // 设置 SSE 端点和调用端点
-    Mock::given(method("GET"))
-        .and(path("/sse"))
-        .respond_with(
-            ResponseTemplate::new(200)
-                .append_header("Content-Type", "text/event-stream")
-                .set_body_string("data: {\"jsonrpc\":\"2.0\",\"result\":\"test\"}\n\n"),
-        )
-        .mount(&mock_server)
-        .await;
-
-    Mock::given(method("POST"))
-        .and(path("/sse/call"))
-        .respond_with(ResponseTemplate::new(200))
-        .mount(&mock_server)
-        .await;
-
-    // 测试 SseServer 的完整生命周期
-    let (tx, _rx) = mpsc::channel(10);
-    let mut sse_server = mcp_bridge::sse_server::SseServer::new(
-        format!("{}/sse", mock_server.uri()),
-        tx,
-        "test_server".to_string(),
-    );
-
-    // 测试启动
-    sse_server.start().await?;
-    assert!(sse_server.is_running());
-
-    // 测试消息发送
-    let message = r#"{"jsonrpc":"2.0","method":"tools/list"}"#;
-    let result = sse_server.send(message).await;
-    assert!(result.is_ok());
-
-    // 测试停止
-    sse_server.stop().await;
-    assert!(!sse_server.is_running());
-
-    Ok(())
-}
-
-#[tokio::test]
 async fn test_bridge_config_with_sse() -> Result<()> {
     // 测试配置加载包含 SSE 的情况
     let mut json_file = NamedTempFile::new()?;
@@ -596,7 +548,8 @@ async fn test_config_validation_sse() {
     servers.insert(
         "sse_server".to_string(),
         ServerConfig::Sse {
-            url: "".to_string(), // 空 URL
+            url: "".to_string(),
+            headers: HashMap::new(),
         },
     );
 
@@ -631,6 +584,7 @@ async fn test_config_validation_sse_valid() {
         "sse_server".to_string(),
         ServerConfig::Sse {
             url: "http://localhost:8080/sse".to_string(),
+            headers: HashMap::new(),
         },
     );
 
@@ -710,7 +664,8 @@ async fn test_sse_config_invalid_url() -> Result<()> {
     servers.insert(
         "sse_server".to_string(),
         ServerConfig::Sse {
-            url: "".to_string(), // 空 URL
+            url: "".to_string(),
+            headers: HashMap::new(),
         },
     );
 

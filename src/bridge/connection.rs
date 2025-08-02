@@ -102,6 +102,7 @@ mod tests {
     use async_trait::async_trait;
     use serde_json::Value;
     use std::any::Any;
+    use std::collections::{HashMap, HashSet};
     use std::fmt;
     use std::sync::Arc;
     use tokio::sync::mpsc;
@@ -156,6 +157,7 @@ mod tests {
             pending_tools_list_request: None,
             tools_collected: false,
             collected_servers: HashSet::new(),
+            tools_list_response_sent: false,
         }
     }
 

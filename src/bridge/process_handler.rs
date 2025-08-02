@@ -52,10 +52,18 @@ pub async fn handle_process_output(
                                 }
                             }
 
+                            if bridge.collected_servers.len() == bridge.config.servers.len() {
+                                bridge.tools_collected = true;
+                                info!("All tools collected after processing server: {server_name}");
+                            }
+
                             info!("Collected {} tools from {server_name}", tools.len());
 
-                            let remaining =
-                                bridge.config.servers.len() - bridge.collected_servers.len();
+                            let remaining = bridge
+                                .config
+                                .servers
+                                .len()
+                                .saturating_sub(bridge.collected_servers.len());
                             info!("Waiting for {} more servers...", remaining);
                         } else {
                             warn!(
@@ -138,7 +146,9 @@ mod tests {
         let result = handle_process_output(&mut bridge, "test_server", output).await;
         assert!(result.is_ok());
 
-        assert!(bridge.last_activity.elapsed() < Duration::from_millis(10));
+        let elapsed = bridge.last_activity.elapsed();
+        assert!(elapsed < Duration::from_millis(10) || elapsed.as_millis() == 0);
+
         Ok(())
     }
 
@@ -227,6 +237,7 @@ mod tests {
 
         assert!(bridge.tools_collected);
         assert_eq!(bridge.tools.len(), 2);
+        assert_eq!(bridge.collected_servers.len(), 2);
 
         Ok(())
     }

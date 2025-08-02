@@ -67,7 +67,7 @@ async fn main() -> Result<()> {
             };
 
             // 设置优雅关闭
-            let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
+            let (_shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
             let bridge_handle = tokio::spawn(async move {
                 if let Err(e) = bridge.run().await {
                     error!("Bridge exited with error: {:#}", e);
