@@ -43,61 +43,75 @@ impl SseServer {
         }
     }
 
-pub async fn start(&mut self) -> Result<()> {
-    if self.is_running {
-        return Ok(());
+    pub async fn start(&mut self) -> Result<()> {
+        if self.is_running {
+            return Ok(());
+        }
+
+        info!("Starting SSE server: {}", self.server_name);
+
+        // 构建自定义 reqwest client
+        let mut headers = HeaderMap::new();
+        for (key, value) in &self.headers {
+            headers.insert(
+                HeaderName::from_bytes(key.as_bytes())?,
+                HeaderValue::from_str(value)?,
+            );
+        }
+
+        let rclient = reqwest::ClientBuilder::new()
+            .default_headers(headers)
+            .build()?;
+
+        let transport = SseClientTransport::start_with_client(
+            rclient,
+            SseClientConfig {
+                sse_endpoint: self.url.clone().into(),
+                ..Default::default()
+            },
+        )
+        .await?;
+
+        let client_info = ClientInfo {
+            protocol_version: Default::default(),
+            capabilities: ClientCapabilities::default(),
+            client_info: Implementation {
+                name: "mcp-bridge".to_string(),
+                version: env!("CARGO_PKG_VERSION").to_string(),
+            },
+        };
+
+        let client = client_info.serve(transport).await.inspect_err(|e| {
+            tracing::error!("client error: {:?}", e);
+        })?;
+
+        // Initialize
+        let server_info = client.peer_info();
+        tracing::info!("Connected to server: {server_info:#?}");
+
+        // List tools
+        let tools = client.list_tools(Default::default()).await?;
+        tracing::info!("Available tools: {tools:#?}");
+
+        let tools = client.list_tools(Default::default()).await?;
+        info!("Collected {} tools from SSE server {}", tools.tools.len(), self.server_name);
+
+        let response = serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": format!("tools-list-{}", self.server_name),
+            "result": {
+                "tools": tools.tools
+            }
+        });
+
+        if let Err(e) = self.output_tx.send((self.server_name.clone(), response.to_string())).await {
+            error!("Failed to send tools list to bridge: {}", e);
+        }
+
+        Ok(())
     }
 
-    info!("Starting SSE server: {}", self.server_name);
-
-    // 构建自定义 reqwest client
-    let mut headers = HeaderMap::new();
-    for (key, value) in &self.headers {
-        headers.insert(
-            HeaderName::from_bytes(key.as_bytes())?,
-            HeaderValue::from_str(value)?,
-        );
-    }
-
-    let rclient = reqwest::ClientBuilder::new()
-        .default_headers(headers)
-        .build()?;
-
-    let transport = SseClientTransport::start_with_client(
-        rclient,
-        SseClientConfig {
-            sse_endpoint: self.url.clone().into(),
-            ..Default::default()
-        },
-    )
-    .await?;
-
-    let client_info = ClientInfo {
-        protocol_version: Default::default(),
-        capabilities: ClientCapabilities::default(),
-        client_info: Implementation {
-            name: "mcp-bridge".to_string(),
-            version: env!("CARGO_PKG_VERSION").to_string(),
-        },
-    };
-
-    let client = client_info.serve(transport).await.inspect_err(|e| {
-        tracing::error!("client error: {:?}", e);
-    })?;
-
-    // Initialize
-    let server_info = client.peer_info();
-    tracing::info!("Connected to server: {server_info:#?}");
-
-    // List tools
-    let tools = client.list_tools(Default::default()).await?;
-    tracing::info!("Available tools: {tools:#?}");
-
-    Ok(())
-}
     async fn request_tools_list(&self) -> Result<()> {
-        // 在实际应用中，这里应该使用服务句柄发送请求
-        // 由于 API 限制，我们简化处理
         let tools_request = serde_json::json!({
             "jsonrpc": "2.0",
             "id": format!("tools-list-{}", self.server_name),
