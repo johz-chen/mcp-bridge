@@ -94,7 +94,7 @@ impl Bridge {
         let (shutdown_tx, mut shutdown_rx) = mpsc::channel(1);
         tokio::spawn(async move {
             if let Err(e) = signal::ctrl_c().await {
-                eprintln!("Failed to listen for ctrl_c signal: {}", e);
+                eprintln!("Failed to listen for ctrl_c signal: {e}");
             } else {
                 shutdown_tx.send(()).await.ok();
             }
