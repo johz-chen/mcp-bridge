@@ -1,6 +1,6 @@
 use anyhow::{Result, anyhow};
 use rmcp::{
-    model::{ClientCapabilities, ClientInfo, Implementation, InitializeRequestParam},
+    model::{ClientCapabilities, ClientInfo, Implementation, InitializeRequestParam, JsonRpcMessage, ClientRequest, RequestId},
     service::RunningService,
     transport::sse_client::SseClientConfig,
     RoleClient, ServiceExt,
@@ -91,9 +91,6 @@ impl SseServer {
 
         // List tools
         let tools = client.list_tools(Default::default()).await?;
-        tracing::info!("Available tools: {tools:#?}");
-
-        let tools = client.list_tools(Default::default()).await?;
         info!("Collected {} tools from SSE server {}", tools.tools.len(), self.server_name);
 
         let response = serde_json::json!({
@@ -108,18 +105,7 @@ impl SseServer {
             error!("Failed to send tools list to bridge: {}", e);
         }
 
-        Ok(())
-    }
-
-    async fn request_tools_list(&self) -> Result<()> {
-        let tools_request = serde_json::json!({
-            "jsonrpc": "2.0",
-            "id": format!("tools-list-{}", self.server_name),
-            "method": "tools/list"
-        });
-
-        // 发送请求
-        self.send(&tools_request.to_string()).await?;
+        self.transport = Some(Arc::new(client));
 
         Ok(())
     }
@@ -138,17 +124,21 @@ impl SseServer {
         self.is_running
     }
 
-    pub async fn send(&self, message: &str) -> Result<()> {
-        if let Some(transport) = &self.transport {
-            // 在实际应用中，这里应该使用服务句柄发送请求
-            // 由于 API 限制，我们简化处理
-            debug!("Sending message to SSE server: {}", message);
-        } else {
-            return Err(anyhow!("Transport not initialized"));
-        }
+pub async fn send(&self, message: &str) -> Result<String> {
+    debug!("Sending message to SSE server: {}", message);
+    let client = self.transport.as_ref()
+        .ok_or_else(|| anyhow!("SSE client not initialized"))?;
 
-        Ok(())
-    }
+    let rpc_req: ClientRequest = serde_json::from_str(message)
+        .map_err(|e| anyhow!("Invalid JSON-RPC: {}", e))?;
+
+    let resp = client.send_request(rpc_req).await?;
+
+    debug!("Received message from SSE server: {:?}", resp);
+
+    Ok(serde_json::to_string(&resp)?)
+}
+
 }
 
 
