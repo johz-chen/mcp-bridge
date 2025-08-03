@@ -35,6 +35,7 @@ pub struct Bridge {
     pub tools_collected: bool,
     pub collected_servers: HashSet<String>,
     pub tools_list_response_sent: bool,
+    pub active_servers: HashSet<String>,
 }
 
 impl Bridge {
@@ -85,6 +86,7 @@ impl Bridge {
             tools_collected: false,
             collected_servers: HashSet::new(),
             tools_list_response_sent: false,
+            active_servers: HashSet::new(),
         })
     }
 
@@ -105,14 +107,25 @@ impl Bridge {
             match server_config {
                 ServerConfig::Std { command, args, env } => {
                     let config = ServerConfig::Std { command, args, env };
-                    let mut process = ManagedProcess::new(&config)?;
-                    process
-                        .start(process_output_tx.clone(), server_name.clone())
-                        .await?;
-                    info!("Started process server: {}", server_name);
+                    match ManagedProcess::new(&config) {
+                        Ok(mut process) => {
+                            if let Err(e) = process
+                                .start(process_output_tx.clone(), server_name.clone())
+                                .await
+                            {
+                                warn!("Failed to start process server {}: {}", server_name, e);
+                                continue;
+                            }
+                            info!("Started process server: {}", server_name);
 
-                    if let Some(stdin) = process.stdin.take() {
-                        self.processes_stdin.insert(server_name.clone(), stdin);
+                            if let Some(stdin) = process.stdin.take() {
+                                self.processes_stdin.insert(server_name.clone(), stdin);
+                            }
+                            self.active_servers.insert(server_name.clone());
+                        }
+                        Err(e) => {
+                            warn!("Failed to create process for server {}: {}", server_name, e);
+                        }
                     }
                 }
                 ServerConfig::Sse { url, headers } => {
@@ -122,11 +135,19 @@ impl Bridge {
                         process_output_tx.clone(),
                         server_name.clone(),
                     );
-                    sse_server.start().await?;
-                    info!("Started SSE server: {}", server_name);
-                    self.sse_servers.insert(server_name.clone(), sse_server);
+                    if let Err(e) = sse_server.start().await {
+                        warn!("Failed to start SSE server {}: {}", server_name, e);
+                    } else {
+                        info!("Started SSE server: {}", server_name);
+                        self.sse_servers.insert(server_name.clone(), sse_server);
+                        self.active_servers.insert(server_name.clone());
+                    }
                 }
             }
+        }
+
+        if self.active_servers.is_empty() {
+            return Err(anyhow!("No active servers"));
         }
 
         for transport in &mut self.transports {
@@ -176,7 +197,6 @@ impl Bridge {
                     }
                 }
                 _ = &mut partial_report_timer, if !self.tools_list_response_sent => {
-                    // 标记所有未响应的服务器为已完成
                     for server_name in self.config.servers.keys() {
                         if !self.collected_servers.contains(server_name) {
                             warn!(
@@ -190,19 +210,12 @@ impl Bridge {
                     if self.pending_tools_list_request.is_some() && !self.tools.is_empty() {
                         info!("Partial tool collection timeout, reporting {} tools", self.tools.len());
                         reply_tools_list(&mut self).await?;
-
-                        // 确保在部分上报后发送变更通知
-                        if self.collected_servers.len() == self.config.servers.len() {
-                            self.tools_collected = true;
-                            info!("All tools collected after partial report, total: {}", self.tools.len());
-                            notify_tools_changed(&mut self).await?;
-                        }
+                        self.tools_list_response_sent = true;
                     }
                 }
             }
 
-            // 检查是否完成工具收集
-            if !self.tools_collected && self.collected_servers.len() == self.config.servers.len() {
+            if !self.tools_collected && self.collected_servers.len() == self.active_servers.len() {
                 self.tools_collected = true;
                 info!("All tools collected, total: {}", self.tools.len());
 
@@ -210,6 +223,7 @@ impl Bridge {
                     notify_tools_changed(&mut self).await?;
                 } else if self.pending_tools_list_request.is_some() {
                     reply_tools_list(&mut self).await?;
+                    self.tools_list_response_sent = true;
                 }
             }
         }
@@ -374,6 +388,7 @@ mod tests {
                 tools_collected: false,
                 collected_servers: HashSet::new(),
                 tools_list_response_sent: false,
+                active_servers: HashSet::new(),
             })
         }
     }
@@ -386,6 +401,33 @@ mod tests {
         assert!(bridge.is_ok());
     }
 
+    fn create_test_bridge() -> Bridge {
+        let config = create_test_config();
+        let (message_tx, message_rx) = mpsc::channel(100);
+
+        Bridge {
+            config,
+            transports: vec![],
+            sse_servers: HashMap::new(),
+            processes_stdin: HashMap::new(),
+            message_tx,
+            message_rx,
+            connection_config: Arc::new(ConnectionConfig::default()),
+            is_connected: true,
+            reconnect_attempt: 0,
+            initialized: false,
+            tools: HashMap::new(),
+            tool_service_map: HashMap::new(),
+            last_activity: Instant::now(),
+            last_ping_sent: Instant::now(),
+            pending_tools_list_request: None,
+            tools_collected: false,
+            collected_servers: HashSet::new(),
+            tools_list_response_sent: false,
+            active_servers: HashSet::new(),
+        }
+    }
+
     #[tokio::test]
     async fn test_bridge_without_transports() {
         let config = create_test_config();
@@ -396,11 +438,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_broadcast_message() {
-        let config = create_test_config();
-        let mock_transport = Box::new(MockTransport);
-        let mut bridge = Bridge::new_with_transports(config, vec![mock_transport])
-            .await
-            .unwrap();
+        let mut bridge = create_test_bridge();
 
         let result = bridge
             .broadcast_message(r#"{"test": "message"}"#.to_string())

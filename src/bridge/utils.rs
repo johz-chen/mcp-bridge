@@ -17,10 +17,9 @@ mod tests {
     use super::*;
     use crate::bridge::core::Bridge;
     use crate::config::{AppConfig, BridgeConfig, ConnectionConfig, MqttConfig, WebSocketConfig};
-    use std::collections::HashMap;
+    use std::collections::{HashMap, HashSet};
     use std::sync::Arc;
 
-    // 创建测试桥接器
     fn create_test_bridge() -> Bridge {
         Bridge {
             config: BridgeConfig {
@@ -57,6 +56,7 @@ mod tests {
             tools_collected: false,
             tools_list_response_sent: false,
             collected_servers: std::collections::HashSet::new(),
+            active_servers: HashSet::new(),
         }
     }
 
