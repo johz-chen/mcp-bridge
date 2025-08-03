@@ -6,8 +6,11 @@
       "@karashiiro/exchange-rate-mcp"
     ]
   },
-    "amap-maps": {
-      "type": "sse",
-      "url": "https://mcp.api-inference.modelscope.net/caa0bd914d9b44/sse"
+  "bing-cn-mcp-server": {
+    "type": "sse",
+    "url": "https://mcp.api-inference.modelscope.net/xxxxxx/sse",
+    "headers": {
+      "Authorization": "Bearer you-token-here"
     }
+  }
 }
