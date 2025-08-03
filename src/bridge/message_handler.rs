@@ -96,11 +96,9 @@ async fn handle_tools_list_request(bridge: &mut Bridge, msg: Value) -> Result<()
 
     bridge.pending_tools_list_request = Some(msg);
 
-    if bridge.tools_collected {
+    if bridge.tools_collected && !bridge.tools_list_response_sent {
         reply_tools_list(bridge).await?;
-    } else if !bridge.tools.is_empty() {
-        // 如果已有部分工具，立即响应
-        reply_tools_list(bridge).await?;
+        bridge.tools_list_response_sent = true;
     }
 
     Ok(())

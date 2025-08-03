@@ -15,6 +15,7 @@ use tokio::sync::mpsc;
 use tokio::time::{Duration, Instant, interval};
 use tracing::{debug, error, info, warn};
 
+
 pub struct Bridge {
     pub config: BridgeConfig,
     pub transports: Vec<Box<dyn Transport>>,
@@ -197,7 +198,6 @@ impl Bridge {
                     }
                 }
                 _ = &mut partial_report_timer, if !self.tools_list_response_sent => {
-                    // 标记所有未响应的服务器为已完成
                     for server_name in self.config.servers.keys() {
                         if !self.collected_servers.contains(server_name) {
                             warn!(
@@ -211,6 +211,7 @@ impl Bridge {
                     if self.pending_tools_list_request.is_some() && !self.tools.is_empty() {
                         info!("Partial tool collection timeout, reporting {} tools", self.tools.len());
                         reply_tools_list(&mut self).await?;
+                        self.tools_list_response_sent = true;
                     }
                 }
             }
@@ -223,6 +224,7 @@ impl Bridge {
                     notify_tools_changed(&mut self).await?;
                 } else if self.pending_tools_list_request.is_some() {
                     reply_tools_list(&mut self).await?;
+                    self.tools_list_response_sent = true;
                 }
             }
         }
