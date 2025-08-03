@@ -85,6 +85,13 @@ connection:
         "args": [
             "/path/to/python-tool.py"
         ]
+    },
+    "example-sse-mcp-server": {
+        "type": "sse",
+        "url": "https://your.host/sse-api",
+        "headers": {
+          "Authorization": "Bearer your-token"
+        }
     }
 }
 
