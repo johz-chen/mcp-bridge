@@ -68,13 +68,8 @@ async fn initialize(bridge: &mut Bridge, msg: Value) -> Result<()> {
     info!("Sent initialize response");
 
     bridge.initialized = true;
-    info!("Bridge initialized");
-
-    bridge.tools.clear();
-    bridge.tool_service_map.clear();
-    bridge.collected_servers.clear();
-    bridge.tools_collected = false;
     bridge.tools_list_response_sent = false;
+    info!("Bridge initialized");
 
     for (server_name, stdin) in &mut bridge.processes_stdin {
         let tools_request = json!({

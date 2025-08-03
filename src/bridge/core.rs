@@ -267,11 +267,9 @@ impl Bridge {
         let mut failed_transports = Vec::new();
 
         for (i, transport) in self.transports.iter_mut().enumerate() {
-            if transport.is_connected() {
-                if let Err(e) = transport.send(msg_value.clone()).await {
-                    error!("Failed to send message via transport: {}", e);
-                    failed_transports.push(i);
-                }
+            if let Err(e) = transport.send(msg_value.clone()).await {
+                error!("Failed to send message via transport {}: {}", i, e);
+                failed_transports.push(i);
             }
         }
 
