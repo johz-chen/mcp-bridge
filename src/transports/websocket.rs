@@ -111,25 +111,30 @@ impl WebSocketTransport {
 
         debug!("Reconnecting to WebSocket endpoint: {}", self.endpoint);
 
-        // 添加连接超时
         let connect_result = timeout(Duration::from_secs(10), connect_async(&self.endpoint)).await;
-        let (ws_stream, _) = match connect_result {
-            Ok(Ok(result)) => result,
-            Ok(Err(e)) => return Err(anyhow!("WebSocket reconnection failed: {}", e)),
-            Err(_) => return Err(anyhow!("WebSocket reconnection timed out")),
-        };
+        match connect_result {
+            Ok(Ok((ws_stream, _))) => {
+                let (write, read) = ws_stream.split();
+                *self.writer.lock().await = Some(write);
+                self.is_connected = true;
 
-        let (write, read) = ws_stream.split();
+                let tx_clone = self.tx.clone();
+                tokio::spawn(Self::receive_messages(read, tx_clone));
 
-        *self.writer.lock().await = Some(write);
-        self.is_connected = true;
-
-        // 重启消息接收任务
-        let tx_clone = self.tx.clone();
-        tokio::spawn(Self::receive_messages(read, tx_clone));
-
-        debug!("WebSocket reconnected");
-        Ok(())
+                debug!("WebSocket reconnected");
+                Ok(())
+            }
+            Ok(Err(e)) => {
+                error!("WebSocket reconnection failed: {}", e);
+                self.is_connected = false;
+                Err(anyhow::anyhow!("WebSocket reconnection failed: {}", e))
+            }
+            Err(_) => {
+                error!("WebSocket reconnection timed out");
+                self.is_connected = false;
+                Err(anyhow::anyhow!("WebSocket reconnection timed out"))
+            }
+        }
     }
 }
 
@@ -154,10 +159,22 @@ impl Transport for WebSocketTransport {
     }
 
     async fn send(&mut self, msg: Value) -> anyhow::Result<()> {
-        if let Some(writer) = &mut *self.writer.lock().await {
+        if !self.is_connected {
+            return Err(anyhow::anyhow!("WebSocket not connected"));
+        }
+
+        let mut writer = self.writer.lock().await;
+        if let Some(writer) = writer.as_mut() {
             let msg_str = msg.to_string();
             debug!("Sending WebSocket message: {}", msg_str);
-            writer.send(WsMessage::Text(msg_str)).await?;
+            if let Err(e) = writer.send(WsMessage::Text(msg_str)).await {
+                error!("Failed to send WebSocket message: {}", e);
+                self.is_connected = false;
+                return Err(e.into());
+            }
+        } else {
+            self.is_connected = false;
+            return Err(anyhow::anyhow!("WebSocket writer is None"));
         }
         Ok(())
     }

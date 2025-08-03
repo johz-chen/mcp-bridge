@@ -1,4 +1,5 @@
 use super::core::Bridge;
+use crate::bridge::message_handler::handle_message;
 use anyhow::anyhow;
 use serde_json::json;
 use tokio::time::{Duration, Instant, sleep};
@@ -67,27 +68,45 @@ pub async fn reconnect(bridge: &mut Bridge) -> anyhow::Result<()> {
     bridge.last_ping_sent = Instant::now();
 
     info!("Successfully reconnected");
+
+    bridge.initialized = false;
+    bridge.tools_collected = false;
+    bridge.tools_list_response_sent = false;
+    bridge.collected_servers.clear();
+    bridge.tools.clear();
+    bridge.tool_service_map.clear();
+
+    let init_msg = json!({
+        "jsonrpc": "2.0",
+        "id": "reinit-after-reconnect",
+        "method": "initialize"
+    });
+
+    handle_message(bridge, init_msg).await?;
+
     Ok(())
 }
 
 pub async fn handle_transport_disconnect(bridge: &mut Bridge, index: usize) {
     if bridge.reconnect_attempt >= bridge.connection_config.max_reconnect_attempts {
-        error!("Max reconnection attempts reached");
+        error!("Max reconnection attempts reached for transport {}", index);
         return;
     }
 
     bridge.reconnect_attempt += 1;
-    let delay = Duration::from_millis(bridge.connection_config.reconnect_interval);
+    let delay = Duration::from_millis(
+        bridge.connection_config.reconnect_interval * (2u64.pow(bridge.reconnect_attempt)),
+    );
 
     warn!(
-        "Attempting to reconnect (attempt {}) in {:?}",
-        bridge.reconnect_attempt, delay
+        "Attempting to reconnect transport {} (attempt {}) in {:?}",
+        index, bridge.reconnect_attempt, delay
     );
 
     tokio::time::sleep(delay).await;
 
     if let Err(e) = bridge.transports[index].connect().await {
-        error!("Failed to reconnect transport: {}", e);
+        error!("Failed to reconnect transport {}: {}", index, e);
     } else {
         bridge.reconnect_attempt = 0;
     }

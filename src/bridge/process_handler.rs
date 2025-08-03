@@ -64,7 +64,10 @@ pub async fn handle_process_output(
                                 .servers
                                 .len()
                                 .saturating_sub(bridge.collected_servers.len());
-                            info!("Waiting for {} more servers...", remaining);
+                            info!(
+                                "Waiting for {} more servers..., bridge.collected_servers: {:#?}",
+                                remaining, bridge.collected_servers
+                            );
                         } else {
                             warn!(
                                 "Invalid tools list format from server {}: {}",
