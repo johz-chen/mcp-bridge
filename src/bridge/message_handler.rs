@@ -274,9 +274,7 @@ mod tests {
 
         handle_message(&mut bridge, init_msg).await?;
 
-        // 验证桥接器已初始化
         assert!(bridge.initialized);
-        // 验证工具列表已清空
         assert!(bridge.tools.is_empty());
         assert!(bridge.tool_service_map.is_empty());
         assert!(bridge.collected_servers.is_empty());
@@ -295,17 +293,16 @@ mod tests {
             "method": "tools/list"
         });
 
-        // 第一次请求 - 工具尚未收集
         handle_message(&mut bridge, tools_list_msg.clone()).await?;
         assert!(bridge.pending_tools_list_request.is_some());
 
-        // 添加一些工具
         bridge.tools.insert(
             "test_tool".to_string(),
             ("test_server".to_string(), json!({"name": "test_tool"})),
         );
 
-        // 第二次请求 - 应该立即回复
+        bridge.tools_list_response_sent = false;
+        bridge.tools_collected = true;
         handle_message(&mut bridge, tools_list_msg).await?;
         assert!(bridge.pending_tools_list_request.is_none());
         assert!(bridge.tools_list_response_sent);
@@ -317,13 +314,11 @@ mod tests {
     async fn test_reply_tools_list() -> Result<()> {
         let mut bridge = create_test_bridge();
 
-        // 添加测试工具
         bridge.tools.insert(
             "test_tool".to_string(),
             ("test_server".to_string(), json!({"name": "test_tool"})),
         );
 
-        // 设置待处理的工具列表请求
         bridge.pending_tools_list_request = Some(json!({
             "jsonrpc": "2.0",
             "id": "tools-list-123",
@@ -332,7 +327,6 @@ mod tests {
 
         reply_tools_list(&mut bridge).await?;
 
-        // 验证请求已被处理
         assert!(bridge.pending_tools_list_request.is_none());
         assert!(bridge.tools_list_response_sent);
         Ok(())
@@ -351,13 +345,11 @@ mod tests {
     async fn test_handle_tool_call_found() -> Result<()> {
         let mut bridge = create_test_bridge();
 
-        // 添加测试工具映射
         bridge.tool_service_map.insert(
             "prefixed_tool".to_string(),
             ("test_server".to_string(), "original_tool".to_string()),
         );
 
-        // 创建真实的子进程标准输入
         let mut dummy_process = Command::new("echo")
             .arg("hello")
             .stdin(std::process::Stdio::piped())

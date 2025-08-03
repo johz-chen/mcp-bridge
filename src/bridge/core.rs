@@ -15,7 +15,6 @@ use tokio::sync::mpsc;
 use tokio::time::{Duration, Instant, interval};
 use tracing::{debug, error, info, warn};
 
-
 pub struct Bridge {
     pub config: BridgeConfig,
     pub transports: Vec<Box<dyn Transport>>,
