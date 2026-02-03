@@ -34,7 +34,7 @@ rmcp = { git = "https://github.com/modelcontextprotocol/rust-sdk", branch = "mai
     "tower",
     "auth"
 ] }
-bytes = "1.10.1"
+bytes = "1.11.1"
 
 [dev-dependencies]
 tempfile = "3.3"
